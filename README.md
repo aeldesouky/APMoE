@@ -1,4 +1,4 @@
-# APMoE
+# Age Prediction using Mixture of Experts (APMoE)
 
 Predicting age using anonymous biometric data with a Mixture of Experts (MoE) model. This project focuses on privacy-preserving age verification without the need for identifiable personal data, integrating advanced Human-Computer Interaction (HCI) implementations to ensure seamless user experience.
 
