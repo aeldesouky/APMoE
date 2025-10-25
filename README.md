@@ -49,7 +49,7 @@ Please cite this project and datasets appropriately when using or referring to r
 
 ## License
 
-The code in this repository is licensed under the MIT License for academic and research purposes.
+The code in this repository is licensed under the Apache 2.0 License for academic and research purposes.
 
 **IMPORTANT:**
 
