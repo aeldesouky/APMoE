@@ -1,0 +1,67 @@
+{
+  "apmoe": {
+    "modalities": [
+      {
+        "name": "visual",
+        "processor": "apmoe.modality.builtin.visual.VisualProcessor",
+        "pipeline": {
+          "cleaner": "apmoe.processing.builtin.cleaners.ImageCleaner",
+          "anonymizer": "apmoe.processing.builtin.anonymizers.FaceAnonymizer",
+          "embedder": "apmoe.processing.builtin.embedders.MobileNetEmbedder"
+        }
+      },
+      {
+        "name": "audio",
+        "processor": "apmoe.modality.builtin.audio.AudioProcessor",
+        "pipeline": {
+          "cleaner": "apmoe.processing.builtin.cleaners.AudioCleaner",
+          "anonymizer": "apmoe.processing.builtin.anonymizers.VoiceAnonymizer"
+        }
+      },
+      {
+        "name": "eeg",
+        "processor": "apmoe.modality.builtin.eeg.EEGProcessor",
+        "pipeline": {
+          "cleaner": "apmoe.processing.builtin.cleaners.EEGCleaner",
+          "anonymizer": "apmoe.processing.builtin.anonymizers.EEGAnonymizer",
+          "embedder": "apmoe.processing.builtin.embedders.EEGEmbedder"
+        }
+      }
+    ],
+    "experts": [
+      {
+        "name": "face_age_expert",
+        "class": "apmoe.experts.builtin.CNNAgeExpert",
+        "weights": "./weights/visual_age_expert.pt",
+        "modalities": ["visual"]
+      },
+      {
+        "name": "audio_age_expert",
+        "class": "apmoe.experts.builtin.MLPAgeExpert",
+        "weights": "./weights/audio_age_expert.pt",
+        "modalities": ["audio"]
+      },
+      {
+        "name": "eeg_age_expert",
+        "class": "apmoe.experts.builtin.EEGAgeExpert",
+        "weights": "./weights/eeg_age_expert.pt",
+        "modalities": ["eeg"]
+      }
+    ],
+    "aggregation": {
+      "strategy": "apmoe.aggregation.builtin.WeightedAverageAggregator",
+      "weights": {
+        "face_age_expert": 0.5,
+        "audio_age_expert": 0.3,
+        "eeg_age_expert": 0.2
+      }
+    },
+    "serving": {
+      "host": "0.0.0.0",
+      "port": 8000,
+      "workers": 4,
+      "cors_origins": ["*"],
+      "log_level": "info"
+    }
+  }
+}

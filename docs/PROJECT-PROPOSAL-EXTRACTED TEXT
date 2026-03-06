@@ -1,0 +1,229 @@
+CSAI 498 / CSAI 499 – Graduation Project Proposal 
+Submission: Week 6  Deliverable Type: Written Report (PDF + GitHub link)
+Cover Page
+• Project Title: Age Prediction Using Mixture of Experts
+• Team Members: (include student name, ID, and program – SWD / IT / DSAI)
+
+
+Student Name
+ID
+Program
+1
+Ahmed Mostafa
+202201114
+DSAI
+2
+Seif Eldin Hisham Khashaba
+202200973
+DSAI
+3
+Ahmed Mohammed
+202201983
+HCI/SWD
+4
+Mohamed Abdelaziz
+202201794
+HCI/SWD
+
+• Supervisor: 
+Prof. Khaled Mostafa
+Prof. Doaa Shawky
+• Semester / Year: FL 25 / Y4
+• Date of Submission: 25/10
+Abstract
+A concise summary (150 – 250 words) describing:
+- The problem you are solving.
+- Why it matters and who it affects.
+- Your proposed solution.
+- The expected outcomes or impact.
+The need for effective and privacy-preserving age verification systems is rapidly increasing, especially following the introduction of stringent digital age verification laws in the European Union and other regions. Current solutions often require users to provide sensitive personal identification documents, such as government-issued IDs, which raises significant privacy and security concerns. This project proposes a novel, privacy-respecting approach that leverages machine learning models to estimate users’ ages using non-identifiable data sources. Potential modalities include visual data (e.g., facial images) and physiological signals such as brainwave activity  both processed through lightweight deep learning architectures. The proposed framework aims to balance accuracy, efficiency, and privacy protection, ensuring scalability across devices and platforms. The expected outcome is a research-backed prototype demonstrating comparable reliability to traditional verification systems while maintaining user anonymity and data security. Furthermore, our work will be available as a documented software framework/API for other developers to integrate into their projects. This work contributes to safer, privacy-conscious digital spaces and aligns with emerging regulatory and ethical standards for online identity verification.
+Problem Statement & Motivation → (SO 1)
+- Describe the real-world problem you are tackling.
+- Explain the context, constraints, and affected stakeholders.
+- Justify why this problem is significant and worth solving.
+Protecting minors from harmful online content is an increasingly urgent challenge as internet access expands globally. Governments and organizations are enforcing strict age-verification regulations to ensure legal compliance and digital safety. However, most current solutions depend on direct collection of sensitive identity data such as ID scans or biometric records creating severe privacy, security, and ethical concerns. These methods can lead to data breaches, identity theft, or unauthorized data sharing, undermining public trust and user safety. The stakeholders affected include minors, general users, online service providers, and regulatory bodies responsible for data protection and compliance. The significance of this problem lies in the tension between user privacy and the necessity of reliable verification mechanisms. Developing an age verification method that preserves privacy without compromising accuracy directly addresses this global need, promoting safer online engagement and responsible data use.
+Proposed Solution → (SO 1 & SO 2)
+- Describe your core idea and approach.
+- Highlight what makes it innovative or distinctive.
+- Explain the key functionalities or features planned.
+This project introduces a privacy-centered, multi-modal age prediction and verification framework that utilizes lightweight deep learning and machine learning models . The proposed system will integrate multiple predictive models based on distinct, minimally identifiable data types (e.g., facial images, voice samples, or brainwave patterns) to enhance reliability and robustness. Unlike conventional verification techniques, this approach does not require submission of official identification or personally identifying information, reducing the risk of data exposure. Furthermore, the provided framework will enable other developers to extend and tailor this work, and integrate it into their own applications.
+The system’s innovation lies in its ensemble modeling approach, where diverse prediction methods collaboratively validate user age. Lightweight architectures such as MobileNet or EfficientNet will enable deployment on low-resource devices while maintaining performance. The project will also evaluate model fairness, accuracy, and latency to ensure usability across platforms. Ultimately, this solution provides a scalable, extendable, ethical alternative to existing methods by balancing regulatory compliance with user privacy preservation.
+
+Project Scope → (SO 2)
+- In Scope: clearly list what your project will cover (Must-have features, Could-have Features).
+- Out of Scope: specify what will not be included (Will-not-have Features).
+- Mention any assumptions or limitations.
+In Scope
+Research and comparative analysis of current age verification and prediction methods.
+Design and development of machine learning models for age prediction using anonymous data.
+Implementation of lightweight, privacy-preserving architectures suitable for real-time prediction .
+Evaluation of model accuracy, latency, and fairness metrics.
+Providing a fully documented API/library to be used by other developers.
+Documentation of system design, research findings, and testing results.
+Nice to Have Features
+Deployment of a production-ready backend, including performance testing, load balancing, and scalability verification.
+Integration of production data pipelines and feature engineering pipelines for automated data preprocessing and continuous model updates.
+A production-ready frontend interface demonstrating the model’s functionality with real-time interactions.
+Optimized user experience (UX) design ensures smooth navigation, responsive layout, and minimal latency during inference.
+Out of Scope
+Development of a commercial or market-ready product.
+Large-scale deployment or user adoption studies.
+Real-world surveys assessing acceptance by companies, governments, or end-users.
+Assumptions and Limitations
+Assume access to publicly available datasets for training and evaluation.
+The system’s predictions will be limited by dataset diversity and real-world data variability.
+The study will be conducted ethically and no personal or private information will be stored or shared with any third parties.
+
+High-Level Timeline → (SO 2)
+Phase
+Description
+Duration
+Deliverables
+Research & Requirement Analysis
+Team formation, brainstorming ideas, research existing solutions/models, identifying datasets, and conducting literature review.
+1–9 weeks (Fall)
+Problem definition, proposal document, literature review summary, initial dataset selection.
+Design & Planning
+Initial system design, defining model architecture, work division, supervisor feedback integration, and planning implementation steps.
+10–14 weeks (Fall)
+System design document, project report (Part I), updated project plan.
+Implementation Part 1
+Developing and testing initial age prediction models; implementing lightweight ML/DL solutions; creating prototype pipelines and the initial core of the developer facing framework,
+1–6 weeks (Spring)
+MVP (Minimum Viable Product), progress report 1, working model prototype.
+Testing & Evaluation
+Further testing, iterative improvements, user guide creation, documentation, and demo preparation.
+7–14 weeks (Spring)
+Final model, performance metrics, final report, user guide, demo, and GitHub repo..
+
+Technology Stack & Theoretical Basis → (SO 6 – Program Specific)
+• List all programming languages, frameworks, tools, and APIs you intend to use.
+• Justify your choices.
+• Program Focus:
+  - SWD: Emphasize algorithms, software architecture, and design patterns.
+  - IT: Focus on integration, systems security, and administration of technologies.
+  - DSAI: Focus on data collection, analysis, AI models, and lifecycle management.
+Category
+Tools / Frameworks
+Justification
+Programming Language
+Python
+Chosen for its versatility, strong support for data science, and vast ecosystem of ML/DL libraries. Furthermore, it has wide adoption between developers and non-blocking I/O.
+Machine / Deep Learning Libraries
+TensorFlow, Keras, PyTorch
+Enable rapid development and experimentation with neural networks; provide pre-trained models and efficient GPU acceleration.
+Data Processing & Analysis
+NumPy, Pandas, Scikit-learn
+Facilitate data cleaning, preprocessing, and model evaluation.
+Visualization
+Matplotlib, Seaborn
+Used for data exploration and visual representation of results and model performance.
+Development & Version Control
+Jupyter Notebook, Git, GitHub
+Support iterative experimentation, collaboration, and transparent version tracking.
+Deployment Tools
+FastAPI, Docker, other tools as needed
+Allow model deployment as lightweight APIs or services across platforms and ease of integration, deployment and extensibility of our framework.
+API Gateway & Docs
+
+
+NGINX and OpenAPI/Swagger UI
+Routing, rate-limits, auth; first-class dev experience for your public API/library.
+API Testing
+Postman
+Used for functional and integration testing of API endpoints, ensuring reliability and correct responses during development.
+API Pentesting
+Burp Suite, OWASP ZAP, Nuclei
+Tools for security assessment and vulnerability scanning of API endpoints; detect injection flaws, authentication issues, and misconfigurations.
+CI/CD
+GitHub Actions, pre-commit hooks
+Automated, testing, integration, and deployment.
+Testing & Documentation
+PyTest, Selenium
+Ensure software reliability and maintain proper documentation.
+
+Program Focus
+For DSAI Students:
+Emphasis on data collection and preprocessing, including acquiring image or biometric datasets.
+Exploration of deep learning architectures for age prediction, such as CNNs and multimodal models.
+Model lifecycle management, involving versioning, retraining, and performance tracking.
+Evaluation metrics like Mean Absolute Error (MAE) and accuracy will measure model success.
+For HCI/SWD Students:
+Focus on system integration, design, and software architecture to ensure scalability and usability.
+Focus on analyzing and processing Human information data.
+Use of modular design patterns for efficient separation of concerns.
+Enabling the development of  user-friendly verification interfaces with strong emphasis on privacy, by developers extending our framework.
+Design and implementation of an extendable, modular interface for developers to customize and integrate our solution into their own applications.
+
+
+Success Metrics & Evaluation Plan → (SO 2 & SO 6)
+Define how success will be measured, e.g.:
+- Performance (speed, latency, accuracy)
+Models will be evaluated for responsiveness and accuracy relative to benchmarks reported in cited literature for each model type.
+- Reliability/security
+The system will be tested for stable operation under normal workloads and reviewed to ensure privacy-preserving data handling practices.
+- Data quality/model accuracy (for DSAI)
+Model accuracy and data integrity will be assessed against referenced research baselines to ensure comparable reliability without compromising user privacy.
+-  API functionality and security
+API endpoints will be validated using Postman for functional testing and assessed with Burp Suite, OWASP ZAP, and Nuclei for vulnerability detection and security assurance.
+- User experience optimization
+Developer experience (DX) and interaction with the framework will be assessed for intuitiveness, clarity, and minimal setup friction to ensure smooth adoption.
+- Developer interface extensibility
+The modular developer interface will be evaluated for ease of integration, documentation clarity, and flexibility.
+- Explain how you will evaluate these metrics (testing plan, surveys, benchmarks, etc.).
+Iterative Testing: Each development phase will include small-scale evaluation to validate stability before progressing.
+Benchmark Comparison: The developed models will be compared to baseline age prediction approaches from prior literature.
+Final Evaluation: An overall assessment based on cumulative performance, stability, and user experience.
+Team Roles & Responsibilities → (SO 5 & SO 3)
+Team Member
+Program
+Primary Role
+Technical Contribution (SO 6 Focus)
+Ahmed Mostafa
+DSAI
+Research, collect, acquire, analyze, and implement datasets and models.
+Peer reviewing
+Seif Eldin Hisham Khashaba
+DSAI
+Ahmed Mohammed
+HCI
+Research, collect, acquire, analyze, and implement data collection, analysis of Human information data. Implementation of the framework (API or library).
+Peer reviewing
+Mohamed Abdelaziz
+HCI
+
+
+Communication Plan (meeting frequency, tools used, documentation platforms):
+weekly for team meetings and biweekly for supervisor meetings. Google meet will be used for online meetings if needed and documentation will be posted on the github repo.
+References
+List any papers, datasets, libraries, or technologies you referenced (use IEEE style).
+Technologies and Libraries
+Python Software Foundation, "Python Language Reference, version 3.9," 2021.​
+[Online]. Available: https://keras.io​
+T. Hunter, "Matplotlib: A 2D Graphics Environment," Computing in Science & Engineering, vol. 9, no. 3, 2007.​
+W. McKinney, "Data Structures for Statistical Computing in Python," in Proc. of the 9th Python in Science Conference, 2010.​
+Scikit-learn Developers, "Scikit-learn: Machine Learning in Python," Journal of Machine Learning Research, vol. 12, 2011.​
+GitHub, "Git Version Control System," 2005. [Online]. Available: https://git-scm.com​
+P. Preda, "Flask Web Framework," 2010. [Online]. Available: https://flask.palletsprojects.com​
+Docker, Inc., "Docker Container Platform," 2013. [Online]. Available: https://www.docker.com​
+MobileNet Paper
+A. G. Howard et al., "MobileNets: Efficient Convolutional Neural Networks for Mobile Vision Applications," arXiv preprint arXiv:1704.04861, 2017.​
+Recent Papers on Mixture of Experts and Age Prediction (2023 onward)
+Q. Zhao, J. Liu, and W. Wei, "Mixture of Deep Networks for Facial Age Estimation," Information Sciences, vol. 633, pp. 1–18, 2024.​
+X. Wang and C. C. Yang, "MoE-Health: A Mixture of Experts Framework for Robust Multimodal Healthcare Prediction," arXiv:2508.21793, 2024.​
+M. S. Islam, M. Z. Uddin, and M. H. H. Chowdhury, "Estimation of Human Age Using Machine Learning on Panoramic Radiographs," Scientific Reports, vol. 14, no. 16893, 2024.​
+T. Lee et al., "Deep learning and generative artificial intelligence in aging research and applications," Aging Cell, vol. 24, no. 1, 2025.​
+
+Datasets:
+F. Abisw, "Facial Age Dataset," Kaggle, 2023. [Online]. Available: https://www.kaggle.com/datasets/frabbisw/facial-age​
+A. Johnson et al., "MIMIC-III, a freely accessible critical care database," Scientific Data, vol. 3, 2016. (Electronic Health Records - MIMIC dataset)​
+X. Liu et al., "OU-ISR Gait Dataset," University of Oklahoma, 2024. (Gait modality dataset)​
+Mozilla Foundation, "Common Voice Dataset," 2023. [Online]. Available: https://commonvoice.mozilla.org​
+Machine Learning Vision Research Group, "IKDD Dataset," 2023. [Online]. Available: https://github.com/MachineLearningVisionRG/IKDD.git​
+National Institute of Standards and Technology, "TUH EEG Corpus," 2024. [Online]. Available: https://isip.piconepress.com/projects/nedc/html/tuh_eeg/​
+Recent Relevant Papers:
+C. Turner et al., “Deep Learning predicted perceived age is a reliable approach for analysis of facial ageing: A proof of Principle Study,” Journal of the European Academy of Dermatology and Venereology : JEADV, https://pmc.ncbi.nlm.nih.gov/articles/PMC11587682 (accessed Oct. 25, 2025)
+H. A. Younis et al., “Multimodal age and Gender Estimation for adaptive human-robot interaction: A systematic literature review,” MDPI, https://www.mdpi.com/2227-9717/11/5/1488 (accessed Oct. 25, 2025). 
+Pentel, A. (2019). Predicting User Age by Keystroke Dynamics. In: Silhavy, R. (eds) Artificial Intelligence and Algorithms in Intelligent Systems. CSOC2018 2018. Advances in Intelligent Systems and Computing, vol 764. Springer, Cham. https://doi.org/10.1007/978-3-319-91189-2_33
+
+Further justification for our motivation and app
