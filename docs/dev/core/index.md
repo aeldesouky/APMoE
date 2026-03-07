@@ -37,6 +37,10 @@ from apmoe import (
     Registry,
     # Config
     load_config, FrameworkConfig,
+    # Pipeline (Phase 3)
+    InferencePipeline, ModalityChain,
+    # App (Phase 3)
+    APMoEApp,
 )
 ```
 
@@ -47,4 +51,7 @@ from apmoe import (
 - [types.md](types.md) — Full type reference
 - [exceptions.md](exceptions.md) — Exception hierarchy and handling guide
 - [registry.md](registry.md) — Registry usage reference
+- [pipeline.md](pipeline.md) — `InferencePipeline` and `ModalityChain` execution model
+- [app.md](app.md) — `APMoEApp` bootstrap lifecycle and inference API
 - [../configuration.md](../configuration.md) — Config file format reference
+- [../testing.md](../testing.md) — Testing strategy for all core modules

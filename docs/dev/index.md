@@ -75,11 +75,14 @@ Raw input (bytes / file)
 | [core/types.md](core/types.md) | Pipeline data types: `ModalityData`, `EmbeddingResult`, `ExpertOutput`, `Prediction` |
 | [core/exceptions.md](core/exceptions.md) | Exception hierarchy — when each error is raised and how to handle it |
 | [core/registry.md](core/registry.md) | `Registry[T]` — registering and resolving components |
+| [core/pipeline.md](core/pipeline.md) | `InferencePipeline` + `ModalityChain` — the two-phase execution loop *(Phase 3)* |
+| [core/app.md](core/app.md) | `APMoEApp` — IoC container, bootstrap lifecycle, inference API *(Phase 3)* |
 | [extension-points/index.md](extension-points/index.md) | Overview of every extension point and the IoC contract |
 | [extension-points/modality-processor.md](extension-points/modality-processor.md) | How to implement `ModalityProcessor` |
 | [extension-points/processing-strategies.md](extension-points/processing-strategies.md) | How to implement `CleanerStrategy`, `AnonymizerStrategy`, `EmbedderStrategy` |
 | [extension-points/expert-plugin.md](extension-points/expert-plugin.md) | How to implement `ExpertPlugin` |
 | [extension-points/aggregator.md](extension-points/aggregator.md) | How to implement `AggregatorStrategy` |
+| [testing.md](testing.md) | Testing strategy — unit, boundary, and integration test layers |
 
 ---
 
@@ -157,7 +160,32 @@ class FaceExpert(ExpertPlugin):
         return ExpertOutput("face_expert", ["visual"], age, confidence=0.9)
 ```
 
-**4. Serve**
+**4. Bootstrap and predict**
+
+```python
+from apmoe import APMoEApp
+
+# One call wires the entire pipeline and loads all weights
+app = APMoEApp.from_config("config.json")
+
+# Run inference
+prediction = app.predict({"visual": image_bytes})
+print(prediction.predicted_age)    # e.g. 34.2
+print(prediction.confidence)       # e.g. 0.87
+
+# Async variant (inside FastAPI / asyncio)
+prediction = await app.predict_async({"visual": image_bytes})
+
+# Health check (weight files, expert liveness)
+report = app.validate()
+
+# Inspect what was loaded
+info = app.get_info()
+print(info["modalities"])  # ["visual"]
+print(info["experts"])     # ["face_expert"]
+```
+
+**5. Serve over HTTP**
 
 ```bash
 apmoe serve --config config.json

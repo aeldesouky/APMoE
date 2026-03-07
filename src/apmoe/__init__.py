@@ -6,10 +6,11 @@ subject to change between minor versions).
 
 Quick start::
 
-    from apmoe.core.config import load_config
-    from apmoe.core.registry import Registry
-    from apmoe.core.types import ModalityData, EmbeddingResult, ExpertOutput, Prediction
-    from apmoe.core.exceptions import APMoEError
+    from apmoe.core.app import APMoEApp
+
+    app = APMoEApp.from_config("configs/my_project.json")
+    prediction = app.predict({"visual": image_bytes})
+    print(prediction.predicted_age)
 
 Phase 1 public symbols
 -----------------------
@@ -31,9 +32,16 @@ Phase 2 public symbols
   and :data:`~apmoe.experts.registry.expert_registry`.
 - :class:`~apmoe.aggregation.base.AggregatorStrategy` ABC
   and :data:`~apmoe.aggregation.base.aggregator_registry`.
+
+Phase 3 public symbols
+-----------------------
+- :class:`~apmoe.core.pipeline.InferencePipeline` — two-phase orchestrator.
+- :class:`~apmoe.core.pipeline.ModalityChain` — per-modality component bundle.
+- :class:`~apmoe.core.app.APMoEApp` — IoC container and main entry point.
 """
 
 from apmoe.aggregation.base import AggregatorStrategy, aggregator_registry
+from apmoe.core.app import APMoEApp
 from apmoe.core.config import (
     AggregationConfig,
     APMoEConfig,
@@ -61,6 +69,7 @@ from apmoe.core.types import (
     Prediction,
     ProcessedInput,
 )
+from apmoe.core.pipeline import InferencePipeline, ModalityChain
 from apmoe.experts.base import ExpertPlugin
 from apmoe.experts.registry import ExpertRegistry, expert_registry
 from apmoe.modality.base import ModalityProcessor
@@ -85,6 +94,8 @@ __all__ = [
     "AggregatorStrategy",
     # Processing strategies
     "AnonymizerStrategy",
+    # App / IoC container  (Phase 3)
+    "APMoEApp",
     "CleanerStrategy",
     "ConfigurationError",
     "EmbedderStrategy",
@@ -97,6 +108,9 @@ __all__ = [
     "ExpertPlugin",
     "ExpertRegistry",
     "FrameworkConfig",
+    # Pipeline  (Phase 3)
+    "InferencePipeline",
+    "ModalityChain",
     "ModalityConfig",
     "ModalityData",
     "ModalityError",

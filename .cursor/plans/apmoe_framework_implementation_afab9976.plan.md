@@ -28,10 +28,10 @@ todos:
     status: done
   - id: pipeline-orchestrator
     content: Implement inference-only PipelineOrchestrator wiring all components
-    status: pending
+    status: done
   - id: app-bootstrap
     content: Implement APMoEApp IoC container with from_config(), predict(), serve()
-    status: pending
+    status: done
   - id: serving-layer
     content: Implement FastAPI app factory, /predict /health /info routes, middleware
     status: pending
