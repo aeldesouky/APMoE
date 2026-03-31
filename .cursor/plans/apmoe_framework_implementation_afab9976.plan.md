@@ -34,10 +34,10 @@ todos:
     status: done
   - id: serving-layer
     content: Implement FastAPI app factory, /predict /health /info routes, middleware
-    status: pending
+    status: done
   - id: cli
     content: "Implement Click-based CLI: init, serve, predict, validate commands"
-    status: pending
+    status: done
   - id: builtin-modalities
     content: Implement built-in Visual, Audio, EEG processors with processing pipelines
     status: pending
@@ -50,6 +50,7 @@ todos:
   - id: example-project
     content: Create examples/quickstart/ with config and custom extension example
     status: pending
+isProject: false
 ---
 
 # APMoE Framework Implementation Plan
@@ -114,6 +115,8 @@ flowchart TB
     Exp3 -->|"age prediction + confidence"| Aggregator
     Aggregator --> FinalOutput["Final Age Prediction"]
 ```
+
+
 
 The pipeline has two phases. First, all modalities are processed independently in parallel through their `Processor -> Cleaner -> Anonymizer -> (optional) Embedder` chains, producing a map of modality-name to processed output (`EmbeddingResult` if an embedder was configured, or `ModalityData` if not). Then, each expert receives the subset of processed data matching its declared modalities and produces an independent age prediction. Finally, all expert predictions flow into the `Aggregator`, which combines them via a mathematical formula (weighted average, median, etc.) or a small learned combiner model.
 
@@ -292,7 +295,7 @@ Example config shape -- modalities and experts are declared separately; each exp
 - `ExpertPlugin(ABC)` with:
   - `declared_modalities() -> list[str]` -- class-level declaration of which modalities this expert consumes (e.g., `["visual"]` or `["visual", "audio"]`).
   - `load_weights(path: str)` -- load pretrained model weights (called once at bootstrap).
-  - `predict(inputs: dict[str, ProcessedInput]) -> ExpertOutput `-- run inference. Receives a dict keyed by modality name containing the processed data (either `EmbeddingResult` or preprocessed `ModalityData`) for this expert's declared modalities.
+  - `predict(inputs: dict[str, ProcessedInput]) -> ExpertOutput` -- run inference. Receives a dict keyed by modality name containing the processed data (either `EmbeddingResult` or preprocessed `ModalityData`) for this expert's declared modalities.
   - `get_info() -> dict` -- metadata about the expert (name, consumed modalities, model architecture).
 - An expert can consume **one or more modalities**. A single-modality expert receives one processed input; a multi-modal expert receives multiple and is responsible for combining them internally however it sees fit. Each input may be an embedding or preprocessed data depending on whether the modality's pipeline included an embedder.
 - `ExpertRegistry`: specialized registry tracking expert instances, their modality requirements, health, and loaded status. At bootstrap, validates that every expert's required modalities are defined in the config.
@@ -321,20 +324,18 @@ Example config shape -- modalities and experts are declared separately; each exp
 
 **Phase A -- Modality Processing (parallel):**
 
-  1. Receives raw multi-modal input (e.g., image + audio + EEG signal).
-  2. For each modality independently and in parallel:
-
-     - Routes to the appropriate `ModalityProcessor` via factory.
-     - Runs through its `Cleaner -> Anonymizer -> (optional) Embedder` chain.
-
-  1. Produces a `dict[str, ProcessedInput] `mapping modality names to their processed output (either `EmbeddingResult` or preprocessed `ModalityData`).
+1. Receives raw multi-modal input (e.g., image + audio + EEG signal).
+2. For each modality independently and in parallel:
+  - Routes to the appropriate `ModalityProcessor` via factory.
+  - Runs through its `Cleaner -> Anonymizer -> (optional) Embedder` chain.
+3. Produces a `dict[str, ProcessedInput]` mapping modality names to their processed output (either `EmbeddingResult` or preprocessed `ModalityData`).
 
 **Phase B -- Expert Inference + Aggregation:**
 
-  1. For each registered expert, selects the subset of processed data matching the expert's `declared_modalities()` and calls `expert.predict(inputs)`.
-  2. Collects all `ExpertOutput`s.
-  3. Passes them to the `AggregatorStrategy` for final combination.
-  4. Returns `Prediction`.
+1. For each registered expert, selects the subset of processed data matching the expert's `declared_modalities()` and calls `expert.predict(inputs)`.
+2. Collects all `ExpertOutput`s.
+3. Passes them to the `AggregatorStrategy` for final combination.
+4. Returns `Prediction`.
 
 - Supports both sync and async execution (async for parallel modality branches).
 - Graceful degradation: if a modality's input is missing, experts that require only that modality are skipped; multi-modal experts that list it as optional can still run. The result notes which experts were skipped and why.
