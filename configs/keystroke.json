@@ -1,0 +1,32 @@
+{
+  "apmoe": {
+    "modalities": [
+      {
+        "name": "keystroke",
+        "processor": "apmoe.modality.builtin.keystroke.KeystrokeProcessor",
+        "pipeline": {
+          "cleaner": "apmoe.processing.builtin.cleaners.KeystrokeCleaner",
+          "anonymizer": "apmoe.processing.builtin.anonymizers.KeystrokeAnonymizer"
+        }
+      }
+    ],
+    "experts": [
+      {
+        "name": "keystroke_age_expert",
+        "class": "apmoe.experts.builtin.KeystrokeAgeExpert",
+        "weights": "./weights/keystroke_age_expert.onnx",
+        "modalities": ["keystroke"]
+      }
+    ],
+    "aggregation": {
+      "strategy": "apmoe.aggregation.builtin.WeightedAverageAggregator"
+    },
+    "serving": {
+      "host": "0.0.0.0",
+      "port": 8000,
+      "workers": 1,
+      "cors_origins": ["*"],
+      "log_level": "info"
+    }
+  }
+}

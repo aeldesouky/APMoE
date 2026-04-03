@@ -2,7 +2,7 @@
 
 Three endpoints are provided:
 
-* ``POST /predict`` — multimodal age prediction from file uploads.
+* ``POST /predict`` — multimodal age prediction via a JSON request body.
 * ``GET /health`` — readiness / liveness probe (checks all experts are loaded).
 * ``GET /info`` — framework metadata (version, experts, modalities, config).
 
@@ -13,11 +13,11 @@ Routes are built by :func:`create_router`, which closes over the
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
-from starlette.datastructures import UploadFile
 
 from apmoe.core.exceptions import APMoEError, PipelineError
 from apmoe.core.types import Prediction
@@ -101,16 +101,34 @@ def create_router(apmoe_app: APMoEApp) -> APIRouter:
         tags=["Inference"],
     )
     async def predict(request: Request) -> dict[str, Any]:
-        """Run the inference pipeline on multimodal file uploads.
+        """Run the inference pipeline from a JSON request body.
 
-        Accepts a ``multipart/form-data`` body where **each field name is a
-        modality name** (e.g. ``visual``, ``audio``, ``eeg``) and the
-        corresponding value is an uploaded file.  Text fields are treated as
-        raw string inputs and passed through unchanged.
+        The body must be a JSON **object** where each key is a modality name
+        and the value is the raw session data for that modality.
 
-        Fields whose names do not match any configured modality are silently
-        ignored.  Configured modalities whose files are absent cause dependent
-        experts to be skipped (graceful degradation).
+        **Keystroke example:**
+
+        .. code-block:: json
+
+            {
+              "keystroke": [
+                [8,  0,  95.0],
+                [13, 0, 100.0],
+                [65, 83, 145.2],
+                [79, 32, 261.0]
+              ]
+            }
+
+        Each value is serialised to UTF-8 JSON bytes and passed to the
+        corresponding modality processor.  Accepted value shapes (auto-detected
+        by the processor):
+
+        * **List of triples** ``[[key1, key2, ms], ...]`` — keystroke sessions
+        * **Dict of lists** ``{"dur_8": [95, 102], ...}`` — pre-computed features
+        * **String** — raw IKDD text (``"8-0,95.0\\n13-0,100.0\\n..."``)
+
+        Modalities absent from the body are skipped gracefully; the experts
+        that required them are listed in ``skipped_experts``.
 
         Returns:
             JSON object containing:
@@ -120,28 +138,43 @@ def create_router(apmoe_app: APMoEApp) -> APIRouter:
             * ``confidence_interval`` — ``[lower, upper]`` or ``null``.
             * ``per_expert_outputs`` — list of per-expert prediction dicts.
             * ``skipped_experts`` — names of experts that could not run.
-            * ``metadata`` — pipeline-level metadata (e.g. latency).
+            * ``metadata`` — pipeline-level metadata.
 
         Raises:
-            HTTPException 422: If the multipart body cannot be parsed.
+            HTTPException 422: If the body is not valid JSON or not a JSON object.
             HTTPException 503: If the pipeline has no runnable experts.
             HTTPException 500: For unexpected framework errors.
         """
+        # --- Parse JSON body ---
         try:
-            form = await request.form()
+            body = await request.json()
         except Exception as exc:
             raise HTTPException(
                 status_code=422,
-                detail=f"Failed to parse multipart form data: {exc}",
+                detail=f"Request body is not valid JSON: {exc}",
             ) from exc
 
-        inputs: dict[str, Any] = {}
-        for field_name, field_value in form.multi_items():
-            if isinstance(field_value, UploadFile):
-                inputs[field_name] = await field_value.read()
-            else:
-                inputs[field_name] = field_value
+        if not isinstance(body, dict):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "JSON body must be an object whose keys are modality names. "
+                    f"Got {type(body).__name__}."
+                ),
+            )
 
+        # Serialise each value to UTF-8 JSON bytes so every modality processor
+        # receives a consistent bytes payload regardless of the value type.
+        inputs: dict[str, Any] = {}
+        for modality, value in body.items():
+            if isinstance(value, str):
+                inputs[modality] = value.encode()
+            elif isinstance(value, bytes):
+                inputs[modality] = value
+            else:
+                inputs[modality] = json.dumps(value).encode()
+
+        # --- Run inference ---
         try:
             prediction: Prediction = await apmoe_app.predict_async(inputs)
         except PipelineError as exc:

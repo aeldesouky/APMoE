@@ -77,6 +77,9 @@ Raw input (bytes / file)
 | [core/registry.md](core/registry.md) | `Registry[T]` — registering and resolving components |
 | [core/pipeline.md](core/pipeline.md) | `InferencePipeline` + `ModalityChain` — the two-phase execution loop *(Phase 3)* |
 | [core/app.md](core/app.md) | `APMoEApp` — IoC container, bootstrap lifecycle, inference API *(Phase 3)* |
+| [serving.md](serving.md) | FastAPI serving layer — routes, middleware order, auth and rate-limit behavior *(Phase 4)* |
+| [cli.md](cli.md) | CLI reference — `init`, `serve`, `predict`, `validate`, exit/error behavior *(Phase 5)* |
+| [new-code-analysis.md](new-code-analysis.md) | High-level analysis of newly added app, serving, and CLI code paths |
 | [extension-points/index.md](extension-points/index.md) | Overview of every extension point and the IoC contract |
 | [extension-points/modality-processor.md](extension-points/modality-processor.md) | How to implement `ModalityProcessor` |
 | [extension-points/processing-strategies.md](extension-points/processing-strategies.md) | How to implement `CleanerStrategy`, `AnonymizerStrategy`, `EmbedderStrategy` |

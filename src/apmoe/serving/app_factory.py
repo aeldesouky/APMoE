@@ -83,7 +83,8 @@ def create_api(
         title="APMoE — Age Prediction using Mixture of Experts",
         description=(
             "Inference-only multimodal age prediction framework.  "
-            "Upload files per modality to ``POST /predict``."
+            "Send a JSON object or multipart form to ``POST /predict`` "
+            "where each key/field name is a modality name."
         ),
         version=apmoe.__version__,
         docs_url="/docs",

@@ -2,7 +2,7 @@
 
 Covers:
 
-* ``POST /predict`` — success, pipeline error, multi-modality, text field.
+* ``POST /predict`` — JSON body: success, pipeline error, multi-modality, invalid body.
 * ``GET /health`` — healthy, degraded (503), no experts.
 * ``GET /info`` — metadata structure.
 * :class:`~apmoe.serving.middleware.RequestLoggingMiddleware` — correlation ID
@@ -16,6 +16,7 @@ Covers:
 
 from __future__ import annotations
 
+import json as _json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -137,11 +138,11 @@ def client(mock_app: MagicMock) -> TestClient:
 class TestPredictEndpoint:
     """Tests for the ``POST /predict`` endpoint."""
 
-    def test_success_with_single_file_upload(self, client: TestClient) -> None:
-        """A valid file upload returns 200 with the prediction structure."""
+    def test_success_with_json_body(self, client: TestClient) -> None:
+        """A valid JSON body returns 200 with the full prediction structure."""
         response = client.post(
             "/predict",
-            files={"visual": ("face.jpg", b"\xff\xd8\xff\xe0", "image/jpeg")},
+            json={"keystroke": [[8, 0, 95.0], [13, 0, 100.0]]},
         )
         assert response.status_code == 200
         body = response.json()
@@ -153,38 +154,54 @@ class TestPredictEndpoint:
         assert body["skipped_experts"] == []
         assert "metadata" in body
 
-    def test_file_bytes_forwarded_to_pipeline(
+    def test_list_value_forwarded_as_json_bytes(
         self, client: TestClient, mock_app: MagicMock
     ) -> None:
-        """Raw bytes of the uploaded file are passed to predict_async."""
-        payload = b"\xde\xad\xbe\xef"
-        client.post("/predict", files={"visual": ("f.bin", payload, "application/octet-stream")})
+        """A JSON list value is serialised to UTF-8 JSON bytes for the pipeline."""
+        session = [[8, 0, 95.0], [13, 0, 100.0], [65, 83, 145.2]]
+        client.post("/predict", json={"keystroke": session})
         mock_app.predict_async.assert_called_once()
         call_inputs: dict[str, Any] = mock_app.predict_async.call_args[0][0]
-        assert call_inputs["visual"] == payload
+        decoded = _json.loads(call_inputs["keystroke"])
+        assert decoded == session
+
+    def test_dict_value_forwarded_as_json_bytes(
+        self, client: TestClient, mock_app: MagicMock
+    ) -> None:
+        """A JSON dict value is serialised to UTF-8 JSON bytes for the pipeline."""
+        features = {"dur_8": [95.0, 102.0], "dig_65_83": [145.2]}
+        client.post("/predict", json={"keystroke": features})
+        call_inputs = mock_app.predict_async.call_args[0][0]
+        decoded = _json.loads(call_inputs["keystroke"])
+        assert decoded == features
+
+    def test_string_value_forwarded_as_utf8_bytes(
+        self, client: TestClient, mock_app: MagicMock
+    ) -> None:
+        """A JSON string value is forwarded as its UTF-8 byte encoding."""
+        raw_ikdd = "8-0,95.0\n13-0,100.0"
+        client.post("/predict", json={"keystroke": raw_ikdd})
+        call_inputs = mock_app.predict_async.call_args[0][0]
+        assert call_inputs["keystroke"] == raw_ikdd.encode()
 
     def test_multiple_modalities_all_forwarded(
         self, client: TestClient, mock_app: MagicMock
     ) -> None:
-        """Multiple modality files are each forwarded under their field name."""
+        """Multiple modalities in a JSON body are all forwarded to the pipeline."""
         client.post(
             "/predict",
-            files={
-                "visual": ("img.jpg", b"\xff\xd8", "image/jpeg"),
-                "audio": ("clip.wav", b"RIFF", "audio/wav"),
-            },
+            json={"keystroke": [[8, 0, 95.0]], "eeg": [0.1, 0.2, 0.3]},
         )
         call_inputs = mock_app.predict_async.call_args[0][0]
-        assert "visual" in call_inputs
-        assert "audio" in call_inputs
+        assert "keystroke" in call_inputs
+        assert "eeg" in call_inputs
 
-    def test_pipeline_error_returns_503(self, client: TestClient, mock_app: MagicMock) -> None:
+    def test_pipeline_error_returns_503(
+        self, client: TestClient, mock_app: MagicMock
+    ) -> None:
         """A PipelineError from predict_async maps to HTTP 503."""
         mock_app.predict_async.side_effect = PipelineError("No experts available.")
-        response = client.post(
-            "/predict",
-            files={"visual": ("f.jpg", b"\xff\xd8", "image/jpeg")},
-        )
+        response = client.post("/predict", json={"keystroke": [[8, 0, 95.0]]})
         assert response.status_code == 503
         assert "No experts available" in response.json()["detail"]
 
@@ -193,10 +210,7 @@ class TestPredictEndpoint:
     ) -> None:
         """An unexpected APMoEError from predict_async maps to HTTP 500."""
         mock_app.predict_async.side_effect = APMoEError("Something went wrong.")
-        response = client.post(
-            "/predict",
-            files={"visual": ("f.jpg", b"\xff\xd8", "image/jpeg")},
-        )
+        response = client.post("/predict", json={"keystroke": [[8, 0, 95.0]]})
         assert response.status_code == 500
         assert "Something went wrong" in response.json()["detail"]
 
@@ -204,17 +218,28 @@ class TestPredictEndpoint:
         """A Prediction with no confidence interval produces null in the response."""
         app = _make_app(predict_result=_make_prediction(ci=None))
         c = TestClient(create_api(app), raise_server_exceptions=False)
-        response = c.post("/predict", files={"visual": ("f.jpg", b"\xff", "image/jpeg")})
+        response = c.post("/predict", json={"keystroke": [[8, 0, 95.0]]})
         assert response.status_code == 200
         assert response.json()["confidence_interval"] is None
 
-    def test_text_field_forwarded_as_string(
-        self, client: TestClient, mock_app: MagicMock
-    ) -> None:
-        """Non-file form fields are forwarded to the pipeline as plain strings."""
-        client.post("/predict", data={"visual": "some-text-value"})
-        call_inputs = mock_app.predict_async.call_args[0][0]
-        assert call_inputs["visual"] == "some-text-value"
+    def test_non_object_json_root_returns_422(self, client: TestClient) -> None:
+        """A JSON array at the top level (not an object) returns 422."""
+        response = client.post(
+            "/predict",
+            content=b"[[8,0,95]]",
+            headers={"Content-Type": "application/json"},
+        )
+        assert response.status_code == 422
+        assert "object" in response.json()["detail"].lower()
+
+    def test_invalid_json_returns_422(self, client: TestClient) -> None:
+        """Malformed JSON in the request body returns 422."""
+        response = client.post(
+            "/predict",
+            content=b"{not valid json}",
+            headers={"Content-Type": "application/json"},
+        )
+        assert response.status_code == 422
 
 
 # ---------------------------------------------------------------------------
@@ -319,7 +344,7 @@ class TestRequestLoggingMiddleware:
         """POST /predict also receives a correlation ID header."""
         response = client.post(
             "/predict",
-            files={"visual": ("f.jpg", b"\xff", "image/jpeg")},
+            json={"keystroke": [[8, 0, 95.0]]},
         )
         assert "x-correlation-id" in response.headers
 
@@ -385,7 +410,6 @@ class TestCORSMiddleware:
         """With cors_origins=['*'], any origin header is accepted."""
         response = client.get("/health", headers={"Origin": "http://example.com"})
         acao = response.headers.get("access-control-allow-origin")
-        # Starlette reflects the specific origin or echoes '*'
         assert acao in ("*", "http://example.com")
 
     def test_specific_allowed_origin_reflected(self) -> None:
@@ -443,14 +467,14 @@ class TestAuthMiddleware:
         """With an always-allow plugin, POST /predict succeeds."""
         app = _make_app()
         c = TestClient(create_api(app, auth_plugin=_AllowAuth()), raise_server_exceptions=False)
-        response = c.post("/predict", files={"visual": ("f.jpg", b"\xff", "image/jpeg")})
+        response = c.post("/predict", json={"keystroke": [[8, 0, 95.0]]})
         assert response.status_code == 200
 
     def test_deny_plugin_blocks_predict(self) -> None:
         """With an always-deny plugin, POST /predict returns 401."""
         app = _make_app()
         c = TestClient(create_api(app, auth_plugin=_DenyAuth()), raise_server_exceptions=False)
-        response = c.post("/predict", files={"visual": ("f.jpg", b"\xff", "image/jpeg")})
+        response = c.post("/predict", json={"keystroke": [[8, 0, 95.0]]})
         assert response.status_code == 401
         assert response.json()["detail"] == "Access denied."
 
@@ -473,10 +497,8 @@ class TestAuthMiddleware:
             create_api(app, auth_plugin=_DenyAuth(), auth_exclude_paths=frozenset({"/predict"})),
             raise_server_exceptions=False,
         )
-        # /predict is now excluded → allowed
-        response = c.post("/predict", files={"visual": ("f.jpg", b"\xff", "image/jpeg")})
+        response = c.post("/predict", json={"keystroke": [[8, 0, 95.0]]})
         assert response.status_code == 200
-        # /health is NOT in custom exclude → blocked
         assert c.get("/health").status_code == 401
 
     def test_api_key_auth_correct_key_allowed(self) -> None:
@@ -488,7 +510,7 @@ class TestAuthMiddleware:
         )
         response = c.post(
             "/predict",
-            files={"visual": ("f.jpg", b"\xff", "image/jpeg")},
+            json={"keystroke": [[8, 0, 95.0]]},
             headers={"X-API-Key": "secret"},
         )
         assert response.status_code == 200
@@ -502,12 +524,12 @@ class TestAuthMiddleware:
         )
         response = c.post(
             "/predict",
-            files={"visual": ("f.jpg", b"\xff", "image/jpeg")},
+            json={"keystroke": [[8, 0, 95.0]]},
             headers={"X-API-Key": "wrong"},
         )
         assert response.status_code == 401
 
     def test_no_auth_plugin_means_no_restriction(self, client: TestClient) -> None:
         """Without an auth plugin, all endpoints are freely accessible."""
-        response = client.post("/predict", files={"visual": ("f.jpg", b"\xff", "image/jpeg")})
+        response = client.post("/predict", json={"keystroke": [[8, 0, 95.0]]})
         assert response.status_code == 200

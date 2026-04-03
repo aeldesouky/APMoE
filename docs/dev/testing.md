@@ -20,7 +20,9 @@ tests/
 │   ├── test_processing.py               # CleanerStrategy, AnonymizerStrategy, EmbedderStrategy ABCs
 │   ├── test_experts.py                  # ExpertPlugin ABC + ExpertRegistry lifecycle
 │   ├── test_aggregation.py              # AggregatorStrategy ABC + aggregator_registry
-│   └── test_pipeline.py                 # InferencePipeline: both phases, hooks, async, degradation
+│   ├── test_pipeline.py                 # InferencePipeline: both phases, hooks, async, degradation
+│   ├── test_serving.py                  # Serving layer: routes, middleware, auth, CORS, rate limiting
+│   └── test_cli.py                      # CLI commands: init, serve, predict, validate, help/version
 └── integration/
     ├── test_app.py                      # APMoEApp.from_config() end-to-end bootstrap + inference
     └── test_module_boundaries.py        # Cross-module interface contracts (7 boundaries)

@@ -25,6 +25,7 @@ dependencies = [
     "click>=8.1",
     "numpy>=1.26",
     "torch>=2.2",
+    "onnxruntime>=1.17",
     "python-multipart>=0.0.22",
 ]
 
