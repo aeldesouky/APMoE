@@ -151,12 +151,41 @@ class ImageProcessor(ModalityProcessor):
             ) from exc
 
         if isinstance(data, (bytes, bytearray)):
-            img = Image.open(io.BytesIO(data))
+            try:
+                img = Image.open(io.BytesIO(data))
+                img.load()  # Force loading to catch format errors here
+            except Exception:
+                # Try decoding as base64 (common for web APIs)
+                import base64
+                import binascii
+                try:
+                    # If data is a base64 string bytes like b"data:image/jpeg;base64,/9j/..."
+                    # or just the raw base64 string bytes b"/9j/..."
+                    str_data = data.decode('utf-8')
+                    if ',' in str_data:
+                        str_data = str_data.split(',', 1)[1]
+                    decoded = base64.b64decode(str_data)
+                    img = Image.open(io.BytesIO(decoded))
+                    img.load()
+                except (binascii.Error, UnicodeDecodeError, Exception):
+                    raise ValueError("Cannot parse byte stream as an image and base64 decode failed.")
         elif isinstance(data, (str, Path)):
             path = Path(data)
-            if not path.exists():
-                raise ValueError(f"Image file not found: {path}")
-            img = Image.open(path)
+            if path.exists():
+                img = Image.open(path)
+            else:
+                 # Try decoding as base64 string
+                import base64
+                import binascii
+                try:
+                    str_data = str(data)
+                    if ',' in str_data:
+                        str_data = str_data.split(',', 1)[1]
+                    decoded = base64.b64decode(str_data)
+                    img = Image.open(io.BytesIO(decoded))
+                    img.load()
+                except (binascii.Error, Exception):
+                    raise ValueError(f"Image file not found and failed to decode as base64: {path}")
         else:
             raise ValueError(
                 f"Expected bytes, str, or Path, got {type(data).__name__}."
