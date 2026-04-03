@@ -4,9 +4,11 @@ Currently provided:
 
 * :class:`KeystrokeAgeExpert` — ONNX-based age-group classifier using
   keystroke dynamics (hold-time and digraph inter-key timing features).
+* :class:`FaceAgeExpert` — Keras deep-learning regression model that predicts
+  age from a 200 × 200 RGB face image (MAE ≈ 11.8 years).
 
-Bootstrap requirements
-----------------------
+Keystroke bootstrap requirements
+---------------------------------
 The expert requires **two files** in the same directory as the ONNX weight
 file:
 
@@ -24,6 +26,15 @@ file:
 
 If this file is absent, :meth:`KeystrokeAgeExpert.load_weights` raises
 :class:`~apmoe.core.exceptions.ExpertError` with clear instructions.
+
+Face model bootstrap requirements
+-----------------------------------
+The expert requires a single ``.keras`` file:
+
+* ``face_age_expert_v1.keras`` — the pretrained Keras regression model.
+
+The model is loaded once at startup via ``tf.keras.models.load_model``.
+Neither an architecture file nor any companion constants file is needed.
 """
 
 from __future__ import annotations
@@ -341,3 +352,192 @@ class KeystrokeAgeExpert(ExpertPlugin):
             else:
                 midpoints.append(float(label))
         return midpoints
+
+
+# ---------------------------------------------------------------------------
+# FaceAgeExpert
+# ---------------------------------------------------------------------------
+
+
+@expert_registry.register("face_age_expert")
+class FaceAgeExpert(ExpertPlugin):
+    """Keras deep-learning regression expert for age prediction from images.
+
+    Loads a ``.keras`` Keras model file trained to predict a person's age
+    from a **200 × 200 RGB image** normalised to the range ``[0, 1]``.
+    The model outputs a single float (the predicted age in years).
+
+    The preprocessing pipeline (handled by
+    :class:`~apmoe.processing.builtin.image_cleaners.ImageCleaner` upstream)
+    follows the exact steps in ``docs/face_integration.md``:
+
+    1. Grayscale → RGB (stack channel 3×).
+    2. RGBA → RGB (drop alpha).
+    3. Resize to ``(200, 200)`` with LANCZOS filter.
+    4. Normalise: ``/ 255.0`` → ``float32`` in ``[0, 1]``.
+
+    The expert then adds the batch dimension and calls
+    ``model.predict(batch, verbose=0)``.
+
+    **Confidence**: the Keras model is a pure regressor and does not produce
+    class probabilities.  A fixed ``confidence = 1.0`` is reported.  This
+    means confidence-weighted aggregators treat the face expert as fully
+    confident; use explicit per-expert weights in config to tune blending.
+
+    Config example
+    --------------
+    .. code-block:: json
+
+        {
+          "name": "face_age_expert",
+          "class": "apmoe.experts.builtin.FaceAgeExpert",
+          "weights": "./weights/face_age_expert_v1.keras",
+          "modalities": ["image"]
+        }
+    """
+
+    def __init__(self) -> None:
+        """Initialise with no model loaded."""
+        self._model: Any = None  # tf.keras.Model
+
+    # ------------------------------------------------------------------
+    # ExpertPlugin interface
+    # ------------------------------------------------------------------
+
+    @property
+    def name(self) -> str:
+        """Return the registered expert name ``"face_age_expert"``."""
+        return "face_age_expert"
+
+    def declared_modalities(self) -> list[str]:
+        """Declare that this expert consumes the ``"image"`` modality."""
+        return ["image"]
+
+    def load_weights(self, path: str) -> None:
+        """Load the Keras ``.keras`` model from *path*.
+
+        The model is loaded via ``tf.keras.models.load_model`` and stored
+        for reuse across all subsequent :meth:`predict` calls.
+
+        Args:
+            path: Filesystem path to the ``face_age_expert_v1.keras`` file.
+
+        Raises:
+            :class:`~apmoe.core.exceptions.ExpertError`: If the file is
+                missing, if TensorFlow / Keras is not installed, or if the
+                model cannot be loaded.
+        """
+        try:
+            import tensorflow as tf  # type: ignore[import-untyped]  # noqa: F401
+        except ImportError as exc:
+            raise ExpertError(
+                "TensorFlow is required for FaceAgeExpert.  "
+                "Install it with: pip install tensorflow",
+                context={"weights": path},
+            ) from exc
+
+        keras_path = Path(path)
+        if not keras_path.exists():
+            raise ExpertError(
+                f"Keras model file not found: {keras_path}",
+                context={"weights": path},
+            )
+
+        try:
+            import tensorflow as tf  # type: ignore[import-untyped]
+            self._model = tf.keras.models.load_model(str(keras_path))
+        except Exception as exc:
+            raise ExpertError(
+                f"Failed to load Keras model from '{keras_path}': {exc}",
+                context={"weights": path},
+            ) from exc
+
+    def predict(self, inputs: dict[str, ProcessedInput]) -> ExpertOutput:
+        """Run Keras inference and return an age prediction.
+
+        The method expects ``inputs["image"]`` to be a
+        :class:`~apmoe.core.types.ModalityData` whose ``data`` attribute is
+        a ``float32`` NumPy array of shape ``(200, 200, 3)`` with values in
+        ``[0, 1]`` — exactly what
+        :class:`~apmoe.processing.builtin.image_cleaners.ImageCleaner`
+        produces.
+
+        The batch dimension is added here following the integration spec::
+
+            img_array = np.expand_dims(img_array, axis=0)  # → (1, 200, 200, 3)
+            prediction = model.predict(img_array)
+            predicted_age = int(round(prediction[0][0]))
+
+        Args:
+            inputs: Must contain ``"image"`` key mapping to a
+                :class:`~apmoe.core.types.ModalityData`.
+
+        Returns:
+            An :class:`~apmoe.core.types.ExpertOutput` with:
+
+            * ``predicted_age`` — float (rounded to nearest integer per spec,
+              stored as float for aggregator compatibility).
+            * ``confidence`` — ``1.0`` (fixed; regressor has no class probs).
+            * ``metadata["raw_output"]`` — raw float32 output before rounding.
+            * ``metadata["rounded_age"]`` — integer age per spec.
+
+        Raises:
+            :class:`~apmoe.core.exceptions.ExpertError`: If the model is not
+                loaded or Keras inference fails.
+        """
+        if self._model is None:
+            raise ExpertError(
+                "FaceAgeExpert: model not loaded — call load_weights() first.",
+                context={"expert": self.name},
+            )
+
+        processed = inputs["image"]
+        img_array: np.ndarray = (
+            processed.data if isinstance(processed, ModalityData) else processed.embedding
+        )
+
+        # Add batch dimension: (200, 200, 3) → (1, 200, 200, 3)
+        batch = np.expand_dims(img_array, axis=0).astype(np.float32)
+
+        try:
+            prediction = self._model.predict(batch, verbose=0)  # type: ignore[union-attr]
+        except Exception as exc:
+            raise ExpertError(
+                f"FaceAgeExpert Keras inference failed: {exc}",
+                context={"expert": self.name},
+            ) from exc
+
+        raw_output = float(prediction[0][0])
+        rounded_age = int(round(raw_output))
+        # Clamp to plausible range — model may occasionally extrapolate
+        predicted_age = float(max(1, min(120, rounded_age)))
+
+        return ExpertOutput(
+            expert_name=self.name,
+            consumed_modalities=["image"],
+            predicted_age=predicted_age,
+            confidence=1.0,
+            metadata={
+                "raw_output": round(raw_output, 4),
+                "rounded_age": rounded_age,
+                "model": "Face Age Prediction v1.0 (Keras, MAE≈11.8)",
+            },
+        )
+
+    def get_info(self) -> dict[str, object]:
+        """Return metadata about this expert for the ``GET /info`` endpoint."""
+        return {
+            "name": self.name,
+            "modalities": self.declared_modalities(),
+            "model": "Face Age Prediction v1.0 (Keras Regression, MAE≈11.8)",
+            "input_shape": "(1, 200, 200, 3)",
+            "input_dtype": "float32",
+            "input_range": "[0, 1]",
+            "output_type": "regressor",
+            "loaded": self.is_loaded,
+        }
+
+    @property
+    def is_loaded(self) -> bool:
+        """Return ``True`` if the Keras model is loaded."""
+        return self._model is not None

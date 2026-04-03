@@ -1,0 +1,50 @@
+{
+  "apmoe": {
+    "modalities": [
+      {
+        "name": "keystroke",
+        "processor": "apmoe.modality.builtin.keystroke.KeystrokeProcessor",
+        "pipeline": {
+          "cleaner": "apmoe.processing.builtin.cleaners.KeystrokeCleaner",
+          "anonymizer": "apmoe.processing.builtin.anonymizers.KeystrokeAnonymizer"
+        }
+      },
+      {
+        "name": "image",
+        "processor": "apmoe.modality.builtin.image.ImageProcessor",
+        "pipeline": {
+          "cleaner": "apmoe.processing.builtin.image_cleaners.ImageCleaner",
+          "anonymizer": "apmoe.processing.builtin.image_anonymizers.ImageAnonymizer"
+        }
+      }
+    ],
+    "experts": [
+      {
+        "name": "keystroke_age_expert",
+        "class": "apmoe.experts.builtin.KeystrokeAgeExpert",
+        "weights": "./weights/keystroke_age_expert.onnx",
+        "modalities": ["keystroke"]
+      },
+      {
+        "name": "face_age_expert",
+        "class": "apmoe.experts.builtin.FaceAgeExpert",
+        "weights": "./weights/face_age_expert_v1.keras",
+        "modalities": ["image"]
+      }
+    ],
+    "aggregation": {
+      "strategy": "apmoe.aggregation.builtin.WeightedAverageAggregator",
+      "weights": {
+        "keystroke_age_expert": 1.0,
+        "face_age_expert": 1.0
+      }
+    },
+    "serving": {
+      "host": "0.0.0.0",
+      "port": 8000,
+      "workers": 1,
+      "cors_origins": ["*"],
+      "log_level": "info"
+    }
+  }
+}
