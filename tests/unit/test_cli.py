@@ -6,7 +6,7 @@ Covers:
 * ``apmoe serve`` — config loading, CLI flag → env-var overrides, error paths.
 * ``apmoe predict`` — directory scan, JSON manifest, output file, error propagation.
 * ``apmoe validate`` — success path, bootstrap error, validation error, health display.
-* ``--help`` output for every command.
+* ``-h`` / ``--help`` output for every command.
 * ``--version`` flag on the CLI group.
 * Invalid config paths and malformed JSON handled gracefully.
 """
@@ -149,6 +149,15 @@ class TestInitCommand:
             runner.invoke(cli, ["init", "myproject"])
             assert (Path("myproject") / "weights").is_dir()
 
+    def test_creates_weights_gitkeep(self, tmp_path: Path) -> None:
+        """``weights/.gitkeep`` is written so the directory is tracked when empty."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "myproject"])
+            gitkeep = Path("myproject") / "weights" / ".gitkeep"
+            assert gitkeep.is_file()
+            assert gitkeep.read_text(encoding="utf-8") == ""
+
     def test_creates_readme(self, tmp_path: Path) -> None:
         """A ``README.md`` file is written inside the project directory."""
         runner = CliRunner()
@@ -195,6 +204,16 @@ class TestInitCommand:
             result = runner.invoke(cli, ["init", "proj"])
             assert "config.json" in result.output
             assert "custom_expert.py" in result.output
+            assert "weights" in result.output
+
+    def test_init_short_help(self) -> None:
+        """``-h`` shows the same help as ``--help`` for ``init``."""
+        runner = CliRunner()
+        long_h = runner.invoke(cli, ["init", "--help"])
+        short_h = runner.invoke(cli, ["init", "-h"])
+        assert long_h.exit_code == 0
+        assert short_h.exit_code == 0
+        assert long_h.output == short_h.output
 
     def test_output_shows_next_steps(self, tmp_path: Path) -> None:
         """The command output includes a 'Next steps' hint."""
@@ -667,6 +686,15 @@ class TestCLIGroup:
         assert "serve" in result.output
         assert "predict" in result.output
         assert "validate" in result.output
+
+    def test_main_short_help(self) -> None:
+        """``apmoe -h`` matches ``apmoe --help``."""
+        runner = CliRunner()
+        long_h = runner.invoke(cli, ["--help"])
+        short_h = runner.invoke(cli, ["-h"])
+        assert long_h.exit_code == 0
+        assert short_h.exit_code == 0
+        assert long_h.output == short_h.output
 
     def test_version_flag(self) -> None:
         """``apmoe --version`` exits 0 and prints the version string."""

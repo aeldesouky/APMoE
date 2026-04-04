@@ -77,7 +77,14 @@ junit.xml
 # -----------------------------------------------------------------------------
 # Machine-learning artefacts
 # -----------------------------------------------------------------------------
-# Pretrained weight files — store in DVC / S3 / model registry, not git
+# weights/ is intentionally TRACKED — it ships the default pre-trained models
+# (keystroke_age_expert.onnx, keystroke_constants.json, face_age_expert_v1.keras,
+# full_digraph_index.json). Only ad-hoc / personally trained checkpoints placed
+# outside that directory should be ignored (see checkpoints/ below).
+
+# Stray / locally-trained ONNX files at the project root (not the shipped defaults)
+*.onnx
+!weights/*.onnx
 
 # Experiment tracking
 runs/

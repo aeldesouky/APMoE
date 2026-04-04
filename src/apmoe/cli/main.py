@@ -29,6 +29,9 @@ from typing import TYPE_CHECKING, Any
 
 import click
 
+# Short and long help flags for the group and every subcommand (Click defaults to ``--help`` only).
+_CLI_CONTEXT_SETTINGS: dict[str, object] = {"help_option_names": ["-h", "--help"]}
+
 if TYPE_CHECKING:
     from apmoe.core.types import Prediction
 
@@ -53,7 +56,7 @@ _CONFIG_TEMPLATE: str = """\
       {
         "name": "face_age_expert",
         "class": "custom_expert.FaceAgeExpert",
-        "weights": "./weights/face_age_expert.pt",
+        "weights": "./weights/{package}_face_age_expert.pt",
         "modalities": ["image"]
       }
     ],
@@ -194,6 +197,7 @@ An APMoE project for age prediction using Mixture of Experts.
   config.json          # Framework configuration
   custom_expert.py     # Example ExpertPlugin implementation
   weights/             # Pretrained weight files (add .pt files here)
+    .gitkeep           # Ensures weights/ is tracked when empty
   README.md            # This file
 ```
 
@@ -232,7 +236,7 @@ def _prediction_to_json(prediction: Prediction) -> str:
 # ---------------------------------------------------------------------------
 
 
-@click.group()
+@click.group(context_settings=_CLI_CONTEXT_SETTINGS)
 @click.version_option(package_name="apmoe")
 def cli() -> None:
     """APMoE — Age Prediction using Mixture of Experts.
@@ -247,7 +251,7 @@ def cli() -> None:
 # ---------------------------------------------------------------------------
 
 
-@cli.command()
+@cli.command(context_settings=_CLI_CONTEXT_SETTINGS)
 @click.argument("project_name", default="my_apmoe_project", metavar="[PROJECT_NAME]")
 def init(project_name: str) -> None:
     r"""Scaffold a new APMoE project directory.
@@ -308,7 +312,7 @@ def init(project_name: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-@cli.command()
+@cli.command(context_settings=_CLI_CONTEXT_SETTINGS)
 @click.option(
     "--config",
     "-c",
@@ -407,7 +411,7 @@ def serve(
 # ---------------------------------------------------------------------------
 
 
-@cli.command()
+@cli.command(context_settings=_CLI_CONTEXT_SETTINGS)
 @click.option(
     "--config",
     "-c",
@@ -564,7 +568,7 @@ def predict(config: str, input_path: str, output: str | None) -> None:
 # ---------------------------------------------------------------------------
 
 
-@cli.command()
+@cli.command(context_settings=_CLI_CONTEXT_SETTINGS)
 @click.option(
     "--config",
     "-c",
