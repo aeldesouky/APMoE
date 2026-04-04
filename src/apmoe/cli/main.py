@@ -41,21 +41,20 @@ _CONFIG_TEMPLATE: str = """\
   "apmoe": {
     "modalities": [
       {
-        "name": "visual",
-        "processor": "{package}.processors.VisualProcessor",
+        "name": "image",
+        "processor": "apmoe.modality.builtin.image.ImageProcessor",
         "pipeline": {
-          "cleaner": "{package}.cleaners.ImageCleaner",
-          "anonymizer": "{package}.anonymizers.FaceAnonymizer",
-          "embedder": "{package}.embedders.MobileNetEmbedder"
+          "cleaner": "apmoe.processing.builtin.image_cleaners.ImageCleaner",
+          "anonymizer": "apmoe.processing.builtin.image_anonymizers.ImageAnonymizer"
         }
       }
     ],
     "experts": [
       {
         "name": "face_age_expert",
-        "class": "{package}.experts.FaceAgeExpert",
+        "class": "custom_expert.FaceAgeExpert",
         "weights": "./weights/face_age_expert.pt",
-        "modalities": ["visual"]
+        "modalities": ["image"]
       }
     ],
     "aggregation": {
@@ -91,18 +90,22 @@ from apmoe import ExpertOutput, ExpertPlugin, ProcessedInput
 
 
 class FaceAgeExpert(ExpertPlugin):
-    """CNN-based age estimation expert that consumes the visual modality.
+    """CNN-based age estimation expert that consumes the image modality.
 
     Replace the stub body with real model loading and inference code.
     """
+
+    @property
+    def name(self) -> str:
+        return "face_age_expert"
 
     def declared_modalities(self) -> list[str]:
         """Return the list of modalities this expert requires.
 
         Returns:
-            ``["visual"]`` — this expert only consumes image data.
+            ``["image"]`` — this expert only consumes image data.
         """
-        return ["visual"]
+        return ["image"]
 
     def load_weights(self, path: str) -> None:
         """Load pretrained model weights from *path*.
@@ -121,7 +124,7 @@ class FaceAgeExpert(ExpertPlugin):
 
         Args:
             inputs: Mapping of modality name to processed data.  The
-                ``"visual"`` key holds either an
+                ``"image"`` key holds either an
                 :class:`~apmoe.EmbeddingResult` (if an embedder was
                 configured) or a :class:`~apmoe.ModalityData`
                 (preprocessed image tensor).
@@ -129,15 +132,15 @@ class FaceAgeExpert(ExpertPlugin):
         Returns:
             An :class:`~apmoe.ExpertOutput` with predicted age and confidence.
         """
-        _visual_data = inputs["visual"]  # noqa: F841
+        _image_data = inputs["image"]  # noqa: F841
         # Replace with real inference, e.g.:
-        # embedding = visual_data.embedding
+        # embedding = image_data.embedding
         # age = float(self._model(embedding).item())
         predicted_age: float = 35.0  # stub
         confidence: float = 0.85  # stub
 
         return ExpertOutput(
-            expert_name=self.__class__.__name__,
+            expert_name=self.name,
             consumed_modalities=self.declared_modalities(),
             predicted_age=predicted_age,
             confidence=confidence,
@@ -151,7 +154,7 @@ class FaceAgeExpert(ExpertPlugin):
             A JSON-serialisable dict with ``name`` and ``modalities`` keys.
         """
         return {
-            "name": self.__class__.__name__,
+            "name": self.name,
             "modalities": self.declared_modalities(),
         }
 '''
@@ -360,6 +363,10 @@ def serve(
     from apmoe.core.app import APMoEApp
     from apmoe.core.exceptions import APMoEError
 
+    app_dir = str(Path(config).resolve().parent)
+    if app_dir not in sys.path:
+        sys.path.insert(0, app_dir)
+
     # Apply CLI overrides via environment variables so load_config picks them up.
     if host is not None:
         os.environ["APMOE_SERVING_HOST"] = host
@@ -447,6 +454,10 @@ def predict(config: str, input_path: str, output: str | None) -> None:
     from apmoe.core.app import APMoEApp
     from apmoe.core.config import load_config
     from apmoe.core.exceptions import APMoEError
+
+    app_dir = str(Path(config).resolve().parent)
+    if app_dir not in sys.path:
+        sys.path.insert(0, app_dir)
 
     # Load config first so we know which modality names are configured.
     try:
@@ -574,6 +585,10 @@ def validate(config: str) -> None:
     """
     from apmoe.core.app import APMoEApp
     from apmoe.core.exceptions import APMoEError
+
+    app_dir = str(Path(config).resolve().parent)
+    if app_dir not in sys.path:
+        sys.path.insert(0, app_dir)
 
     # Bootstrap validates schema + resolves all component classes.
     try:
