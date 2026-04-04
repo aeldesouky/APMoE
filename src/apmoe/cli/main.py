@@ -63,7 +63,7 @@ _CONFIG_TEMPLATE: str = """\
     "serving": {
       "host": "0.0.0.0",
       "port": 8000,
-      "workers": 4,
+      "workers": 1,
       "log_level": "info"
     }
   }
