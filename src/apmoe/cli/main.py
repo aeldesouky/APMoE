@@ -135,12 +135,19 @@ An APMoE project for age prediction using Mixture of Experts.
 2. **Weights**: Default models are already under `weights/`. Replace or add
    files there if you train your own checkpoints (and update paths in `config.json`).
 
-3. **Validate**: Check the configuration is correct:
+3. **Validate**: Check the configuration is correct. Run these from **inside**
+   this project folder (`cd` here first), or pass the **full path** to `config.json`
+   (required if you open a new terminal whose working directory is elsewhere):
    ```
    apmoe validate --config config.json
    ```
+   Example with an absolute path:
+   ```
+   apmoe validate --config "/path/to/{project_name}/config.json"
+   ```
 
-4. **Serve**: Start the HTTP API:
+4. **Serve**: Start the HTTP API (same rule as validate — use `config.json` from
+   the project directory, or the full path):
    ```
    apmoe serve --config config.json
    ```
@@ -266,6 +273,9 @@ def init(project_name: str) -> None:
     readme_content = _README_TEMPLATE.replace("{project_name}", project_name)
     (project_dir / "README.md").write_text(readme_content, encoding="utf-8")
 
+    project_abs = project_dir.resolve()
+    config_abs = project_abs / "config.json"
+
     click.echo(click.style(f"Created project '{project_name}/'", fg="green"))
     click.echo(f"  {project_name}/config.json        — edit to configure your components")
     click.echo(f"  {project_name}/custom_expert.py   — optional custom ExpertPlugin stubs")
@@ -276,10 +286,13 @@ def init(project_name: str) -> None:
         click.echo(f"  {project_name}/weights/            — place pretrained model files here")
     click.echo(f"  {project_name}/README.md           — quick-start instructions")
     click.echo()
-    click.echo("Next steps:")
-    click.echo(f"  cd {project_name}")
+    click.echo("Next steps (inside the project directory):")
+    click.echo(f"  cd {project_abs}")
     click.echo("  apmoe validate --config config.json")
     click.echo("  apmoe serve --config config.json")
+    click.echo("Or pass the config path (works from any directory / new terminal):")
+    click.echo(f'  apmoe validate --config "{config_abs}"')
+    click.echo(f'  apmoe serve --config "{config_abs}"')
 
 
 # ---------------------------------------------------------------------------
