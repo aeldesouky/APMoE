@@ -23,6 +23,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -50,14 +51,28 @@ _CONFIG_TEMPLATE: str = """\
           "cleaner": "apmoe.processing.builtin.image_cleaners.ImageCleaner",
           "anonymizer": "apmoe.processing.builtin.image_anonymizers.ImageAnonymizer"
         }
+      },
+      {
+        "name": "keystroke",
+        "processor": "apmoe.modality.builtin.keystroke.KeystrokeProcessor",
+        "pipeline": {
+          "cleaner": "apmoe.processing.builtin.cleaners.KeystrokeCleaner",
+          "anonymizer": "apmoe.processing.builtin.anonymizers.KeystrokeAnonymizer"
+        }
       }
     ],
     "experts": [
       {
         "name": "face_age_expert",
-        "class": "custom_expert.FaceAgeExpert",
-        "weights": "./weights/{package}_face_age_expert.pt",
+        "class": "apmoe.experts.builtin.FaceAgeExpert",
+        "weights": "./weights/face_age_expert.keras",
         "modalities": ["image"]
+      },
+      {
+        "name": "keystroke_age_expert",
+        "class": "apmoe.experts.builtin.KeystrokeAgeExpert",
+        "weights": "./weights/keystroke_age_expert.onnx",
+        "modalities": ["keystroke"]
       }
     ],
     "aggregation": {
@@ -74,92 +89,37 @@ _CONFIG_TEMPLATE: str = """\
 """
 
 _EXPERT_TEMPLATE: str = '''\
-"""Example custom expert for {project_name}.
+"""Optional custom experts for {project_name}.
 
-Extend :class:`~apmoe.ExpertPlugin` to create your own age-prediction expert.
-Register your class in ``config.json`` under the ``"experts"`` section.
+The default ``config.json`` from ``apmoe init`` uses the built-in experts
+(:class:`~apmoe.experts.builtin.FaceAgeExpert` and
+:class:`~apmoe.experts.builtin.KeystrokeAgeExpert`) with the bundled weights in
+``weights/`` — those run real Keras / ONNX inference.
 
-Steps
------
-1. Implement :meth:`load_weights` to load your pretrained model from *path*.
-2. Implement :meth:`predict` to run inference and return an
-   :class:`~apmoe.ExpertOutput`.
-3. Update ``"class"`` in ``config.json`` to point at this module and class.
+Use this file when you want a **custom** :class:`~apmoe.ExpertPlugin`:
+subclass it, implement ``load_weights`` and ``predict``, then set the
+``"class"`` field in ``config.json`` to ``"custom_expert.YourClassName"``.
 """
 
 from __future__ import annotations
 
-from apmoe import ExpertOutput, ExpertPlugin, ProcessedInput
-
-
-class FaceAgeExpert(ExpertPlugin):
-    """CNN-based age estimation expert that consumes the image modality.
-
-    Replace the stub body with real model loading and inference code.
-    """
-
-    @property
-    def name(self) -> str:
-        return "face_age_expert"
-
-    def declared_modalities(self) -> list[str]:
-        """Return the list of modalities this expert requires.
-
-        Returns:
-            ``["image"]`` — this expert only consumes image data.
-        """
-        return ["image"]
-
-    def load_weights(self, path: str) -> None:
-        """Load pretrained model weights from *path*.
-
-        Called once at bootstrap.  Replace the stub with real loading code.
-
-        Args:
-            path: Filesystem path to the weight file (e.g. a ``.pt`` file).
-        """
-        # Example: self._model = torch.load(path, map_location="cpu")
-        # self._model.eval()
-        self._loaded = True  # type: ignore[attr-defined]
-
-    def predict(self, inputs: dict[str, ProcessedInput]) -> ExpertOutput:
-        """Run inference and return an age prediction.
-
-        Args:
-            inputs: Mapping of modality name to processed data.  The
-                ``"image"`` key holds either an
-                :class:`~apmoe.EmbeddingResult` (if an embedder was
-                configured) or a :class:`~apmoe.ModalityData`
-                (preprocessed image tensor).
-
-        Returns:
-            An :class:`~apmoe.ExpertOutput` with predicted age and confidence.
-        """
-        _image_data = inputs["image"]  # noqa: F841
-        # Replace with real inference, e.g.:
-        # embedding = image_data.embedding
-        # age = float(self._model(embedding).item())
-        predicted_age: float = 35.0  # stub
-        confidence: float = 0.85  # stub
-
-        return ExpertOutput(
-            expert_name=self.name,
-            consumed_modalities=self.declared_modalities(),
-            predicted_age=predicted_age,
-            confidence=confidence,
-            metadata={"model": "FaceAgeExpert-stub"},
-        )
-
-    def get_info(self) -> dict[str, object]:
-        """Return metadata about this expert.
-
-        Returns:
-            A JSON-serialisable dict with ``name`` and ``modalities`` keys.
-        """
-        return {
-            "name": self.name,
-            "modalities": self.declared_modalities(),
-        }
+# Example imports when you add your own expert:
+# from apmoe import ExpertOutput, ExpertPlugin, ProcessedInput
+#
+#
+# class MyCustomExpert(ExpertPlugin):
+#     @property
+#     def name(self) -> str:
+#         return "my_custom_expert"
+#
+#     def declared_modalities(self) -> list[str]:
+#         return ["image"]
+#
+#     def load_weights(self, path: str) -> None:
+#         ...
+#
+#     def predict(self, inputs: dict[str, ProcessedInput]) -> ExpertOutput:
+#         ...
 '''
 
 _README_TEMPLATE: str = """\
@@ -172,8 +132,8 @@ An APMoE project for age prediction using Mixture of Experts.
 1. **Configure**: Edit `config.json` to point to your processor, cleaner,
    anonymizer, embedder, and expert implementations.
 
-2. **Add weights**: Place pretrained weight files in the `weights/` directory
-   (or update paths in `config.json`).
+2. **Weights**: Default models are already under `weights/`. Replace or add
+   files there if you train your own checkpoints (and update paths in `config.json`).
 
 3. **Validate**: Check the configuration is correct:
    ```
@@ -194,10 +154,9 @@ An APMoE project for age prediction using Mixture of Experts.
 
 ```
 {project_name}/
-  config.json          # Framework configuration
-  custom_expert.py     # Example ExpertPlugin implementation
-  weights/             # Pretrained weight files (add .pt files here)
-    .gitkeep           # Ensures weights/ is tracked when empty
+  config.json          # Framework configuration (built-in Keras + ONNX experts)
+  custom_expert.py     # Optional: your own ExpertPlugin (default config uses builtins)
+  weights/             # face_age_expert.keras, keystroke_*.onnx, keystroke_constants.json
   README.md            # This file
 ```
 
@@ -256,15 +215,18 @@ def cli() -> None:
 def init(project_name: str) -> None:
     r"""Scaffold a new APMoE project directory.
 
-    Creates PROJECT_NAME/ with a config template, an example expert
-    implementation, an empty weights directory, and a README.
+    Creates PROJECT_NAME/ with a config template wired to the built-in Keras
+    and ONNX experts, bundled default weights, a ``custom_expert.py`` placeholder,
+    and a README.
 
     \b
     Files created:
-      config.json        — minimal configuration template
-      custom_expert.py   — example ExpertPlugin implementation
-      weights/           — directory for pretrained model files
-      README.md          — quick-start instructions
+      config.json                        — minimal configuration template
+      custom_expert.py                   — placeholder for optional custom experts
+      weights/keystroke_age_expert.onnx  — default keystroke age model
+      weights/keystroke_constants.json   — keystroke feature constants
+      weights/face_age_expert.keras      — default face age model
+      README.md                          — quick-start instructions
     """
     project_dir = Path(project_name)
 
@@ -279,15 +241,24 @@ def init(project_name: str) -> None:
         )
         sys.exit(1)
 
-    # Derive a Python-safe package name from the project name.
-    package_name = project_name.replace("-", "_").replace(" ", "_")
-
     project_dir.mkdir(parents=True)
-    (project_dir / "weights").mkdir()
-    (project_dir / "weights" / ".gitkeep").write_text("", encoding="utf-8")
+    weights_dest = project_dir / "weights"
+    weights_dest.mkdir()
 
-    config_content = _CONFIG_TEMPLATE.replace("{package}", package_name)
-    (project_dir / "config.json").write_text(config_content, encoding="utf-8")
+    # Copy default pretrained models bundled with the package.
+    _pkg_weights = Path(__file__).parent.parent / "weights"
+    copied: list[str] = []
+    if _pkg_weights.is_dir():
+        for src_file in sorted(_pkg_weights.iterdir()):
+            if src_file.is_file():
+                shutil.copy2(src_file, weights_dest / src_file.name)
+                copied.append(src_file.name)
+
+    if not copied:
+        # Fallback: write a .gitkeep so the directory is not entirely empty.
+        (weights_dest / ".gitkeep").write_text("", encoding="utf-8")
+
+    (project_dir / "config.json").write_text(_CONFIG_TEMPLATE, encoding="utf-8")
 
     expert_content = _EXPERT_TEMPLATE.replace("{project_name}", project_name)
     (project_dir / "custom_expert.py").write_text(expert_content, encoding="utf-8")
@@ -297,8 +268,12 @@ def init(project_name: str) -> None:
 
     click.echo(click.style(f"Created project '{project_name}/'", fg="green"))
     click.echo(f"  {project_name}/config.json        — edit to configure your components")
-    click.echo(f"  {project_name}/custom_expert.py   — example ExpertPlugin implementation")
-    click.echo(f"  {project_name}/weights/            — place pretrained .pt files here")
+    click.echo(f"  {project_name}/custom_expert.py   — optional custom ExpertPlugin stubs")
+    if copied:
+        for name in copied:
+            click.echo(f"  {project_name}/weights/{name}")
+    else:
+        click.echo(f"  {project_name}/weights/            — place pretrained model files here")
     click.echo(f"  {project_name}/README.md           — quick-start instructions")
     click.echo()
     click.echo("Next steps:")

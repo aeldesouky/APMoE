@@ -28,7 +28,7 @@
       {
         "name": "face_age_expert",
         "class": "apmoe.experts.builtin.FaceAgeExpert",
-        "weights": "./weights/face_age_expert_v1.keras",
+        "weights": "./weights/face_age_expert.keras",
         "modalities": ["image"]
       }
     ],

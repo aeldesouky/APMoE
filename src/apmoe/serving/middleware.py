@@ -79,19 +79,54 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         request.state.correlation_id = correlation_id
         started_at = time.perf_counter()
 
-        response: Response = await call_next(request)
+        try:
+            response: Response = await call_next(request)
+        except Exception as exc:
+            duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
+            logger.error(
+                "[%s] 500 Unhandled exception in %s %s after %.2f ms — %s: %s",
+                correlation_id,
+                request.method,
+                request.url.path,
+                duration_ms,
+                type(exc).__name__,
+                exc,
+                exc_info=True,
+            )
+            raise
 
         duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
+        status_code = response.status_code
         record: dict[str, object] = {
             "correlation_id": correlation_id,
             "method": request.method,
             "path": request.url.path,
             "query": str(request.url.query) or None,
-            "status_code": response.status_code,
+            "status_code": status_code,
             "duration_ms": duration_ms,
             "client_host": request.client.host if request.client else None,
         }
-        logger.info(json.dumps(record))
+
+        if status_code >= 500:
+            logger.error(
+                "[%s] %d %s %s — %.2f ms",
+                correlation_id,
+                status_code,
+                request.method,
+                request.url.path,
+                duration_ms,
+            )
+        elif status_code >= 400:
+            logger.warning(
+                "[%s] %d %s %s — %.2f ms",
+                correlation_id,
+                status_code,
+                request.method,
+                request.url.path,
+                duration_ms,
+            )
+        else:
+            logger.info(json.dumps(record))
 
         response.headers["X-Correlation-ID"] = correlation_id
         return response

@@ -31,7 +31,7 @@ Face model bootstrap requirements
 -----------------------------------
 The expert requires a single ``.keras`` file:
 
-* ``face_age_expert_v1.keras`` — the pretrained Keras regression model.
+* ``face_age_expert.keras`` — the pretrained Keras regression model.
 
 The model is loaded once at startup via ``tf.keras.models.load_model``.
 Neither an architecture file nor any companion constants file is needed.
@@ -380,9 +380,10 @@ class FaceAgeExpert(ExpertPlugin):
     ``model.predict(batch, verbose=0)``.
 
     **Confidence**: the Keras model is a pure regressor and does not produce
-    class probabilities.  A fixed ``confidence = 1.0`` is reported.  This
-    means confidence-weighted aggregators treat the face expert as fully
-    confident; use explicit per-expert weights in config to tune blending.
+    a calibrated probability.  :attr:`~apmoe.core.types.ExpertOutput.confidence`
+    is set to ``-1.0`` (not reported).  Aggregators ignore ``-1`` when combining
+    self-reported confidence; use explicit per-expert ``aggregation.weights``
+    in config to tune blending with other experts.
 
     Config example
     --------------
@@ -391,7 +392,7 @@ class FaceAgeExpert(ExpertPlugin):
         {
           "name": "face_age_expert",
           "class": "apmoe.experts.builtin.FaceAgeExpert",
-          "weights": "./weights/face_age_expert_v1.keras",
+          "weights": "./weights/face_age_expert.keras",
           "modalities": ["image"]
         }
     """
@@ -420,7 +421,7 @@ class FaceAgeExpert(ExpertPlugin):
         for reuse across all subsequent :meth:`predict` calls.
 
         Args:
-            path: Filesystem path to the ``face_age_expert_v1.keras`` file.
+            path: Filesystem path to the ``face_age_expert.keras`` file.
 
         Raises:
             :class:`~apmoe.core.exceptions.ExpertError`: If the file is
@@ -477,7 +478,7 @@ class FaceAgeExpert(ExpertPlugin):
 
             * ``predicted_age`` — float (rounded to nearest integer per spec,
               stored as float for aggregator compatibility).
-            * ``confidence`` — ``1.0`` (fixed; regressor has no class probs).
+            * ``confidence`` — ``-1.0`` (not reported; regressor has no class probs).
             * ``metadata["raw_output"]`` — raw float32 output before rounding.
             * ``metadata["rounded_age"]`` — integer age per spec.
 
@@ -516,7 +517,7 @@ class FaceAgeExpert(ExpertPlugin):
             expert_name=self.name,
             consumed_modalities=["image"],
             predicted_age=predicted_age,
-            confidence=1.0,
+            confidence=-1.0,
             metadata={
                 "raw_output": round(raw_output, 4),
                 "rounded_age": rounded_age,

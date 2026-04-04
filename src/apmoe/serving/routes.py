@@ -14,6 +14,7 @@ Routes are built by :func:`create_router`, which closes over the
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -24,6 +25,8 @@ from apmoe.core.types import Prediction
 
 if TYPE_CHECKING:
     from apmoe.core.app import APMoEApp
+
+logger = logging.getLogger("apmoe.serving.routes")
 
 
 # ---------------------------------------------------------------------------
@@ -145,16 +148,28 @@ def create_router(apmoe_app: APMoEApp) -> APIRouter:
             HTTPException 503: If the pipeline has no runnable experts.
             HTTPException 500: For unexpected framework errors.
         """
+        correlation_id: str = getattr(request.state, "correlation_id", "-")
+
         # --- Parse JSON body ---
         try:
             body = await request.json()
         except Exception as exc:
+            logger.warning(
+                "[%s] 422 Bad request — body is not valid JSON: %s",
+                correlation_id,
+                exc,
+            )
             raise HTTPException(
                 status_code=422,
                 detail=f"Request body is not valid JSON: {exc}",
             ) from exc
 
         if not isinstance(body, dict):
+            logger.warning(
+                "[%s] 422 Bad request — expected JSON object, got %s",
+                correlation_id,
+                type(body).__name__,
+            )
             raise HTTPException(
                 status_code=422,
                 detail=(
@@ -178,8 +193,20 @@ def create_router(apmoe_app: APMoEApp) -> APIRouter:
         try:
             prediction: Prediction = await apmoe_app.predict_async(inputs)
         except PipelineError as exc:
+            logger.error(
+                "[%s] 503 Service Unavailable — pipeline error: %s",
+                correlation_id,
+                exc,
+                exc_info=True,
+            )
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         except APMoEError as exc:
+            logger.error(
+                "[%s] 500 Internal Server Error — framework error: %s",
+                correlation_id,
+                exc,
+                exc_info=True,
+            )
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
         return _prediction_to_dict(prediction)
@@ -221,6 +248,12 @@ def create_router(apmoe_app: APMoEApp) -> APIRouter:
         }
 
         if not all_healthy:
+            not_loaded = [name for name, ok in expert_health.items() if not ok]
+            logger.error(
+                "503 Service Unavailable — health check degraded. "
+                "Experts not loaded: %s",
+                not_loaded,
+            )
             return JSONResponse(content=payload, status_code=503)
 
         return payload  # type: ignore[return-value]

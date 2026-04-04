@@ -231,8 +231,9 @@ class CalibratedExpert(ExpertPlugin):
    `self`. Do not load weights in `predict()`.
 3. `predict()` must be **thread-safe** if `workers > 1` in serving config.
    Use `torch.inference_mode()` and avoid shared mutable state.
-4. Return `confidence` in `[0.0, 1.0]`. Construction of `ExpertOutput`
-   validates this and raises `ValueError` otherwise.
+4. Return `confidence` in `[0.0, 1.0]`, or `-1.0` if the expert does not
+   report a score (e.g. a regressor with no uncertainty head). Construction of
+   `ExpertOutput` validates this and raises `ValueError` otherwise.
 5. The `expert_name` in the returned `ExpertOutput` should match the `name`
    from config so aggregators can match weights correctly.
 

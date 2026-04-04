@@ -78,13 +78,15 @@ junit.xml
 # Machine-learning artefacts
 # -----------------------------------------------------------------------------
 # weights/ is intentionally TRACKED — it ships the default pre-trained models
-# (keystroke_age_expert.onnx, keystroke_constants.json, face_age_expert_v1.keras,
+# (keystroke_age_expert.onnx, keystroke_constants.json, face_age_expert.keras,
 # full_digraph_index.json). Only ad-hoc / personally trained checkpoints placed
 # outside that directory should be ignored (see checkpoints/ below).
 
 # Stray / locally-trained ONNX files at the project root (not the shipped defaults)
 *.onnx
+# Un-ignore the canonical model directories so git tracks the shipped defaults.
 !weights/*.onnx
+!src/apmoe/weights/*.onnx
 
 # Experiment tracking
 runs/

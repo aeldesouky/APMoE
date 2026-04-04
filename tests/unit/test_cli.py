@@ -149,14 +149,38 @@ class TestInitCommand:
             runner.invoke(cli, ["init", "myproject"])
             assert (Path("myproject") / "weights").is_dir()
 
-    def test_creates_weights_gitkeep(self, tmp_path: Path) -> None:
-        """``weights/.gitkeep`` is written so the directory is tracked when empty."""
+    def test_weights_directory_contains_default_models(self, tmp_path: Path) -> None:
+        """Default pretrained model files are copied into ``weights/``."""
         runner = CliRunner()
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "myproject"])
-            gitkeep = Path("myproject") / "weights" / ".gitkeep"
-            assert gitkeep.is_file()
-            assert gitkeep.read_text(encoding="utf-8") == ""
+            weights_dir = Path("myproject") / "weights"
+            files = [f.name for f in weights_dir.iterdir() if f.is_file()]
+            # At least one model file should be present; if the package ships
+            # defaults they are copied, otherwise a .gitkeep sentinel is used.
+            assert len(files) > 0, "weights/ must not be empty after init"
+
+    def test_weights_directory_has_onnx_model(self, tmp_path: Path) -> None:
+        """The keystroke ONNX model is present when package weights are available."""
+        from apmoe.cli.main import Path as _Path  # noqa: PLC0415
+        pkg_weights = _Path(__file__).parent.parent.parent / "src" / "apmoe" / "weights"
+        if not (pkg_weights / "keystroke_age_expert.onnx").exists():
+            pytest.skip("Package weights not present in this environment")
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "myproject"])
+            assert (Path("myproject") / "weights" / "keystroke_age_expert.onnx").is_file()
+
+    def test_weights_directory_has_constants_json(self, tmp_path: Path) -> None:
+        """``keystroke_constants.json`` is copied alongside the ONNX model."""
+        from apmoe.cli.main import Path as _Path  # noqa: PLC0415
+        pkg_weights = _Path(__file__).parent.parent.parent / "src" / "apmoe" / "weights"
+        if not (pkg_weights / "keystroke_constants.json").exists():
+            pytest.skip("Package weights not present in this environment")
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "myproject"])
+            assert (Path("myproject") / "weights" / "keystroke_constants.json").is_file()
 
     def test_creates_readme(self, tmp_path: Path) -> None:
         """A ``README.md`` file is written inside the project directory."""
@@ -181,21 +205,21 @@ class TestInitCommand:
             result = runner.invoke(cli, ["init", "myproject"])
             assert result.exit_code != 0
 
-    def test_config_contains_package_name(self, tmp_path: Path) -> None:
-        """The generated ``config.json`` references the package name."""
+    def test_config_references_face_model(self, tmp_path: Path) -> None:
+        """The generated ``config.json`` points at the bundled face model file."""
         runner = CliRunner()
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "cool_project"])
             content = (Path("cool_project") / "config.json").read_text(encoding="utf-8")
-            assert "cool_project" in content
+            assert "face_age_expert.keras" in content
 
-    def test_hyphen_in_name_becomes_underscore_in_package(self, tmp_path: Path) -> None:
-        """Hyphens in the project name are normalised to underscores in config."""
+    def test_config_references_keystroke_model(self, tmp_path: Path) -> None:
+        """The generated ``config.json`` points at the bundled keystroke ONNX model."""
         runner = CliRunner()
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "my-project"])
             content = (Path("my-project") / "config.json").read_text(encoding="utf-8")
-            assert "my_project" in content
+            assert "keystroke_age_expert.onnx" in content
 
     def test_output_mentions_created_files(self, tmp_path: Path) -> None:
         """The command output lists the scaffolded files."""

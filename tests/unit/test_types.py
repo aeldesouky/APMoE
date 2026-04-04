@@ -158,6 +158,11 @@ class TestExpertOutput:
         with pytest.raises(ValueError, match="confidence"):
             ExpertOutput("e", ["visual"], 25.0, -0.01)
 
+    def test_confidence_sentinel_negative_one_valid(self) -> None:
+        """-1.0 means the expert does not report a confidence score."""
+        out = ExpertOutput("e", ["visual"], 25.0, -1.0)
+        assert out.confidence == -1.0
+
     def test_multi_modal_expert(self) -> None:
         out = ExpertOutput(
             expert_name="multi",

@@ -141,6 +141,25 @@ class TestResolve:
         with pytest.raises(RegistryError, match="not a registered name"):
             reg.resolve("unknown_no_dots")
 
+    def test_resolve_legacy_keystroke_cleaner_path(self) -> None:
+        """Old configs used ``keystroke_cleaners``; alias resolves to ``cleaners``."""
+        from apmoe.processing.base import cleaner_registry
+        from apmoe.processing.builtin.cleaners import KeystrokeCleaner
+
+        cls = cleaner_registry.resolve(
+            "apmoe.processing.builtin.keystroke_cleaners.KeystrokeCleaner",
+        )
+        assert cls is KeystrokeCleaner
+
+    def test_resolve_legacy_keystroke_anonymizer_path(self) -> None:
+        from apmoe.processing.base import anonymizer_registry
+        from apmoe.processing.builtin.anonymizers import KeystrokeAnonymizer
+
+        cls = anonymizer_registry.resolve(
+            "apmoe.processing.builtin.keystroke_anonymizers.KeystrokeAnonymizer",
+        )
+        assert cls is KeystrokeAnonymizer
+
 
 # ---------------------------------------------------------------------------
 # Introspection helpers

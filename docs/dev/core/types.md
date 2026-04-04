@@ -130,19 +130,21 @@ class ExpertOutput:
     expert_name:          str
     consumed_modalities:  list[str]
     predicted_age:        float
-    confidence:           float           # must be in [0.0, 1.0]
+    confidence:           float           # [0.0, 1.0] or -1.0 = not reported
     metadata:             dict[str, Any]  = field(default_factory=dict)
 ```
 
 Returned by `ExpertPlugin.predict()`. The `confidence` field is validated on
-construction — values outside `[0.0, 1.0]` raise `ValueError`.
+construction: values in `[0.0, 1.0]`, or exactly `-1.0` meaning the expert
+does not report a score (e.g. a pure regressor). Any other value raises
+`ValueError`.
 
 | Field | Description |
 |---|---|
 | `expert_name` | Should match the `name` field in config; used by aggregators and in the `Prediction` breakdown. |
 | `consumed_modalities` | Which modalities this expert actually used (may be a subset of its declared modalities if some were optional and missing). |
 | `predicted_age` | Age estimate in years. No upper or lower bound is enforced. |
-| `confidence` | Self-reported certainty in `[0.0, 1.0]`. Used by `ConfidenceWeightedAggregator` and `LearnedCombiner`. |
+| `confidence` | Self-reported certainty in `[0.0, 1.0]`, or `-1.0` if not reported. Built-in aggregators treat `-1` as “no score” when combining. `FaceAgeExpert` uses `-1` because the Keras regressor has no calibrated confidence. |
 | `metadata` | Optional key/value pairs for observability (inference latency, internal logits, model version, etc.). |
 
 ---
@@ -174,7 +176,8 @@ The final output of the inference pipeline, returned by
 
 ### Validation
 
-- `confidence` outside `[0.0, 1.0]` raises `ValueError`.
+- `ExpertOutput.confidence` outside `[0.0, 1.0]` and not equal to `-1.0` raises `ValueError`.
+- `Prediction.confidence` (aggregated) remains in `[0.0, 1.0]`.
 - `confidence_interval` with `lower > upper` raises `ValueError`.
 - Equal bounds (`lower == upper`) are accepted (degenerate interval).
 

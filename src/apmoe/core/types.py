@@ -130,8 +130,9 @@ class ExpertOutput:
             output (matches the ``name`` field in config).
         consumed_modalities: List of modality names the expert actually used.
         predicted_age: The expert's age estimate in years.
-        confidence: A scalar in ``[0.0, 1.0]`` indicating the expert's
-            self-reported confidence.  Higher is more confident.
+        confidence: Self-reported confidence in ``[0.0, 1.0]`` (higher is more
+            certain), or exactly ``-1.0`` when the expert does **not** report a
+            score (e.g. a pure regressor with no calibrated uncertainty).
         metadata: Arbitrary key/value pairs (inference time, internal scores,
             model version, etc.).
     """
@@ -143,10 +144,14 @@ class ExpertOutput:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        """Validate that ``confidence`` is within ``[0.0, 1.0]``."""
-        if not (0.0 <= self.confidence <= 1.0):
+        """Validate ``confidence``: ``[0.0, 1.0]`` or sentinel ``-1.0``."""
+        c = self.confidence
+        if c == -1.0:
+            return
+        if not (0.0 <= c <= 1.0):
             raise ValueError(
-                f"ExpertOutput.confidence must be in [0.0, 1.0], got {self.confidence}"
+                f"ExpertOutput.confidence must be in [0.0, 1.0] or -1.0 (not reported), "
+                f"got {c}"
             )
 
 

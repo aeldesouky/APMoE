@@ -92,7 +92,7 @@ class TestFaceAgeE2E:
         assert output.expert_name == "face_age_expert"
         assert output.consumed_modalities == ["image"]
         assert output.predicted_age == float(round(28.7))
-        assert output.confidence == 1.0
+        assert output.confidence == -1.0
         assert "raw_output" in output.metadata
         assert "rounded_age" in output.metadata
 

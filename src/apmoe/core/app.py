@@ -42,6 +42,7 @@ from apmoe.aggregation.base import AggregatorStrategy, aggregator_registry
 from apmoe.core.config import FrameworkConfig, load_config
 from apmoe.core.exceptions import ConfigurationError, ExpertError, ServingError
 from apmoe.core.pipeline import InferencePipeline, ModalityChain
+from apmoe.core.registry import legacy_dotted_import_alias
 from apmoe.core.types import Prediction
 from apmoe.experts.registry import ExpertRegistry
 from apmoe.modality.factory import ModalityProcessorFactory
@@ -138,9 +139,11 @@ class APMoEApp:
             processor = processors[mod_name]
             pipeline_cfg = modality_cfg.pipeline
 
-            # Resolve cleaner
+            # Resolve cleaner (rewrite legacy dotted paths before registry lookup)
             try:
-                cleaner_cls = cleaner_registry.resolve(pipeline_cfg.cleaner)
+                cleaner_cls = cleaner_registry.resolve(
+                    legacy_dotted_import_alias(pipeline_cfg.cleaner),
+                )
                 cleaner: CleanerStrategy = cleaner_cls()
             except Exception as exc:  # noqa: BLE001
                 raise ConfigurationError(
@@ -149,9 +152,11 @@ class APMoEApp:
                     context={"modality": mod_name, "cleaner": pipeline_cfg.cleaner},
                 ) from exc
 
-            # Resolve anonymizer
+            # Resolve anonymizer (rewrite legacy dotted paths before registry lookup)
             try:
-                anonymizer_cls = anonymizer_registry.resolve(pipeline_cfg.anonymizer)
+                anonymizer_cls = anonymizer_registry.resolve(
+                    legacy_dotted_import_alias(pipeline_cfg.anonymizer),
+                )
                 anonymizer: AnonymizerStrategy = anonymizer_cls()
             except Exception as exc:  # noqa: BLE001
                 raise ConfigurationError(

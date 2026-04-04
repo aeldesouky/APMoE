@@ -47,6 +47,9 @@ apmoe = "apmoe.cli.main:cli"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/apmoe"]
+# Ship the default pretrained models as package data so ``apmoe init`` can
+# seed new project weights/ directories without any extra download step.
+artifacts = ["src/apmoe/weights/**"]
 
 # ---------------------------------------------------------------------------
 # Ruff (linter + formatter)

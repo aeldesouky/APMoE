@@ -48,6 +48,7 @@ Each list can hold multiple callables; they are called in order.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -55,6 +56,8 @@ from typing import Any
 
 from apmoe.aggregation.base import AggregatorStrategy
 from apmoe.core.exceptions import ExpertError, ModalityError, PipelineError
+
+logger = logging.getLogger("apmoe.pipeline")
 from apmoe.core.types import ExpertOutput, ModalityData, Prediction, ProcessedInput
 from apmoe.experts.registry import ExpertRegistry
 from apmoe.modality.base import ModalityProcessor
@@ -300,6 +303,12 @@ class InferencePipeline:
                 )
             except ModalityError as exc:
                 failed[modality_name] = str(exc)
+                logger.error(
+                    "Modality '%s' failed during processing: %s",
+                    modality_name,
+                    exc,
+                    exc_info=True,
+                )
 
         return processed, failed
 
@@ -329,6 +338,19 @@ class InferencePipeline:
         available = set(processed.keys())
         runnable = self.expert_registry.get_runnable_experts(available)
         skipped_names: list[str] = self.expert_registry.get_skipped_experts(available)
+
+        if failed_modalities:
+            logger.error(
+                "Phase A completed with %d failed modality/modalities: %s",
+                len(failed_modalities),
+                {name: msg for name, msg in failed_modalities.items()},
+            )
+        if skipped_names:
+            logger.warning(
+                "Skipping %d expert(s) because required modalities are unavailable: %s",
+                len(skipped_names),
+                skipped_names,
+            )
 
         expert_outputs: list[ExpertOutput] = []
         for expert in runnable:
@@ -457,6 +479,12 @@ class InferencePipeline:
                 )
                 return name, result, None
             except ModalityError as exc:
+                logger.error(
+                    "Modality '%s' failed during processing: %s",
+                    name,
+                    exc,
+                    exc_info=True,
+                )
                 return name, None, str(exc)
 
         results = await asyncio.gather(*[_process_one(name) for name in modality_names])

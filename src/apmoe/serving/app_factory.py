@@ -11,10 +11,12 @@ framework inside an existing FastAPI / ASGI application.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import logging
+from typing import TYPE_CHECKING, Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 import apmoe
 from apmoe.serving.middleware import (
@@ -27,6 +29,8 @@ from apmoe.serving.routes import create_router
 
 if TYPE_CHECKING:
     from apmoe.core.app import APMoEApp
+
+logger = logging.getLogger("apmoe.serving")
 
 
 def create_api(
@@ -118,6 +122,27 @@ def create_api(
             AuthMiddleware,
             auth_plugin=auth_plugin,
             exclude_paths=auth_exclude_paths,
+        )
+
+    # Catch-all handler for any exception that escapes the route layer.
+    # FastAPI would otherwise return a bare 500 with no console output.
+    @api.exception_handler(Exception)
+    async def _unhandled_exception_handler(
+        request: Request, exc: Exception
+    ) -> JSONResponse:
+        correlation_id: str = getattr(request.state, "correlation_id", "-")
+        logger.error(
+            "[%s] 500 Unhandled %s in %s %s: %s",
+            correlation_id,
+            type(exc).__name__,
+            request.method,
+            request.url.path,
+            exc,
+            exc_info=True,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Internal server error: {exc}"},
         )
 
     # Mount route handlers

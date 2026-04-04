@@ -25,6 +25,26 @@ import statistics
 from apmoe.aggregation.base import AggregatorStrategy, aggregator_registry
 from apmoe.core.types import ExpertOutput, Prediction
 
+
+def _scalar_in_unit_interval(confidence: float) -> float:
+    """Return *confidence* if it is a real score in ``[0, 1]``; else ``0.0``.
+
+    :class:`~apmoe.core.types.ExpertOutput` uses ``-1.0`` to mean “confidence
+    not reported”; that value must not pull numeric aggregates negative.
+    """
+    if 0.0 <= confidence <= 1.0:
+        return confidence
+    return 0.0
+
+
+def _mean_reported_confidence(outputs: list[ExpertOutput]) -> float:
+    """Mean of per-expert confidences in ``[0, 1]``; ignores ``-1`` (unknown)."""
+    valid = [o.confidence for o in outputs if 0.0 <= o.confidence <= 1.0]
+    if not valid:
+        return 0.0
+    return min(sum(valid) / len(valid), 1.0)
+
+
 # ---------------------------------------------------------------------------
 # WeightedAverageAggregator
 # ---------------------------------------------------------------------------
@@ -90,7 +110,10 @@ class WeightedAverageAggregator(AggregatorStrategy):
             o.predicted_age * w for o, w in zip(outputs, norm_weights)
         )
         confidence = min(
-            sum(o.confidence * w for o, w in zip(outputs, norm_weights)),
+            sum(
+                _scalar_in_unit_interval(o.confidence) * w
+                for o, w in zip(outputs, norm_weights)
+            ),
             1.0,
         )
 
@@ -126,8 +149,10 @@ class ConfidenceWeightedAggregator(AggregatorStrategy):
 
     No configuration weights are needed.  Experts that are more confident
     in their predictions automatically contribute more to the final estimate.
-    If all experts report zero confidence the aggregator falls back to a
-    uniform average.
+    Experts with ``confidence == -1.0`` (not reported) contribute weight
+    ``0``; if all experts are ``-1`` or zero, the aggregator falls back to a
+    uniform average for the age blend. Final ``Prediction.confidence`` is the
+    mean of scores in ``[0, 1]`` only, or ``0.0`` if none.
     """
 
     def aggregate(self, outputs: list[ExpertOutput]) -> Prediction:
@@ -140,13 +165,18 @@ class ConfidenceWeightedAggregator(AggregatorStrategy):
             A :class:`~apmoe.core.types.Prediction` with confidence-weighted
             age and mean confidence.
         """
-        total_conf = sum(o.confidence for o in outputs) or 1.0
-        norm_weights = [o.confidence / total_conf for o in outputs]
+        raw_weights = [_scalar_in_unit_interval(o.confidence) for o in outputs]
+        total_conf = sum(raw_weights)
+        if total_conf <= 0.0:
+            # No reported confidences (e.g. all -1): uniform blend, same as all-zero.
+            norm_weights = [1.0 / len(outputs)] * len(outputs)
+        else:
+            norm_weights = [w / total_conf for w in raw_weights]
 
         predicted_age = sum(
             o.predicted_age * w for o, w in zip(outputs, norm_weights)
         )
-        confidence = min(sum(o.confidence for o in outputs) / len(outputs), 1.0)
+        confidence = _mean_reported_confidence(outputs)
 
         return Prediction(
             predicted_age=predicted_age,
@@ -181,9 +211,7 @@ class MedianAggregator(AggregatorStrategy):
         """
         ages = [o.predicted_age for o in outputs]
         predicted_age = statistics.median(ages)
-        confidence = min(
-            sum(o.confidence for o in outputs) / len(outputs), 1.0
-        )
+        confidence = _mean_reported_confidence(outputs)
 
         return Prediction(
             predicted_age=predicted_age,

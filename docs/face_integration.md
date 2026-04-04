@@ -77,6 +77,10 @@ predicted_age = int(round(prediction[0][0]))
 * Output is **float**
 * Must be **rounded to integer**
 
+### Confidence in APMoE
+
+The face model is a **regressor**: it returns a single age value, not class probabilities. In the APMoE framework, `FaceAgeExpert` sets per-expert `confidence` to **`-1.0`**, which means **confidence is not reported** (not a score in `[0, 1]`). Aggregators treat `-1` as “no self-reported confidence” when combining experts; the final prediction `confidence` stays in `[0.0, 1.0]`. Use explicit `aggregation.weights` in config if you need to control how the face expert blends with others.
+
 ---
 
 ## 8. System Integration

@@ -12,6 +12,12 @@ Config key:  aggregation.strategy
 
 ---
 
+## `ExpertOutput.confidence` and `-1.0`
+
+Per-expert `confidence` may be in `[0.0, 1.0]` or exactly **`-1.0`**, meaning the expert does not report a score (e.g. `FaceAgeExpert`, a pure Keras regressor). Built-in aggregators in `apmoe.aggregation.builtin` treat `-1` as **no numeric confidence**: it does not contribute to confidence-weighted blends as a negative value, and means are taken only over experts with real scores in `[0, 1]`. The returned `Prediction.confidence` is always in `[0.0, 1.0]`.
+
+---
+
 ## Abstract interface
 
 ```python

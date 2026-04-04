@@ -41,6 +41,30 @@ from apmoe.core.exceptions import RegistryError
 
 T = TypeVar("T")
 
+# Older templates and docs used these dotted paths; the implementations live
+# under ``cleaners`` / ``anonymizers``.  Map here so resolution works even if
+# optional shim modules are missing from an installed wheel.
+_LEGACY_DOTTED_IMPORT_ALIASES: dict[str, str] = {
+    "apmoe.processing.builtin.keystroke_cleaners.KeystrokeCleaner": (
+        "apmoe.processing.builtin.cleaners.KeystrokeCleaner"
+    ),
+    "apmoe.processing.builtin.keystroke_anonymizers.KeystrokeAnonymizer": (
+        "apmoe.processing.builtin.anonymizers.KeystrokeAnonymizer"
+    ),
+}
+
+
+def legacy_dotted_import_alias(dotted_class_path: str) -> str:
+    """Return the canonical dotted import path for *dotted_class_path*.
+
+    Older configs and templates referenced non-existent submodules such as
+    ``keystroke_cleaners``; implementations live under ``cleaners`` /
+    ``anonymizers``.  Bootstrap code should run paths through this helper
+    **before** :meth:`Registry.resolve` so resolution works even if an
+    environment has an older registry implementation.
+    """
+    return _LEGACY_DOTTED_IMPORT_ALIASES.get(dotted_class_path, dotted_class_path)
+
 
 class Registry(Generic[T]):
     """Generic name-to-class registry.
@@ -174,8 +198,9 @@ class Registry(Generic[T]):
 
         # 2. Attempt dotted-path import.
         if "." in name_or_path:
+            dotted = legacy_dotted_import_alias(name_or_path)
             try:
-                module_path, attr_name = name_or_path.rsplit(".", 1)
+                module_path, attr_name = dotted.rsplit(".", 1)
                 module = importlib.import_module(module_path)
                 cls: type[T] = getattr(module, attr_name)
                 return cls
