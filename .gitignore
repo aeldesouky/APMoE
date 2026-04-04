@@ -78,18 +78,6 @@ junit.xml
 # Machine-learning artefacts
 # -----------------------------------------------------------------------------
 # Pretrained weight files — store in DVC / S3 / model registry, not git
-weights/
-*.pt
-*.pth
-*.onnx
-*.safetensors
-*.bin
-*.npz
-*.npy
-*.pkl
-*.pickle
-*.h5
-*.hdf5
 
 # Experiment tracking
 runs/
