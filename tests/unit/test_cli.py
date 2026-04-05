@@ -166,38 +166,55 @@ class TestInitCommand:
             runner.invoke(cli, ["init", "myproject"])
             assert (Path("myproject") / "weights").is_dir()
 
-    def test_weights_directory_contains_default_models(self, tmp_path: Path) -> None:
-        """Default pretrained model files are copied into ``weights/``."""
-        runner = CliRunner()
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "myproject"])
-            weights_dir = Path("myproject") / "weights"
-            files = [f.name for f in weights_dir.iterdir() if f.is_file()]
-            # At least one model file should be present; if the package ships
-            # defaults they are copied, otherwise a .gitkeep sentinel is used.
-            assert len(files) > 0, "weights/ must not be empty after init"
+    @patch("apmoe.cli.main._find_repo_weights_dir")
+    def test_builtin_copies_face_and_keystroke_weights(
+        self, mock_find_weights: MagicMock, tmp_path: Path
+    ) -> None:
+        """``--builtin`` copies bundled face/keystroke assets into ``weights/``."""
+        builtin_weights_dir = tmp_path / "builtin_weights"
+        builtin_weights_dir.mkdir()
+        (builtin_weights_dir / "face_age_expert_v1.keras").write_text(
+            "face", encoding="utf-8"
+        )
+        (builtin_weights_dir / "keystroke_age_expert.onnx").write_text(
+            "keystroke", encoding="utf-8"
+        )
+        (builtin_weights_dir / "keystroke_constants.json").write_text(
+            "{}", encoding="utf-8"
+        )
+        mock_find_weights.return_value = builtin_weights_dir
 
-    def test_weights_directory_has_onnx_model(self, tmp_path: Path) -> None:
-        """The keystroke ONNX model is present when package weights are available."""
-        from apmoe.cli.main import Path as _Path  # noqa: PLC0415
-        pkg_weights = _Path(__file__).parent.parent.parent / "src" / "apmoe" / "weights"
-        if not (pkg_weights / "keystroke_age_expert.onnx").exists():
-            pytest.skip("Package weights not present in this environment")
         runner = CliRunner()
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "myproject"])
+            result = runner.invoke(cli, ["init", "myproject", "--builtin"])
+
+            assert result.exit_code == 0, result.output
+            assert (Path("myproject") / "weights" / "face_age_expert_v1.keras").is_file()
             assert (Path("myproject") / "weights" / "keystroke_age_expert.onnx").is_file()
+            assert (Path("myproject") / "weights" / "keystroke_constants.json").is_file()
 
-    def test_weights_directory_has_constants_json(self, tmp_path: Path) -> None:
-        """``keystroke_constants.json`` is copied alongside the ONNX model."""
-        from apmoe.cli.main import Path as _Path  # noqa: PLC0415
-        pkg_weights = _Path(__file__).parent.parent.parent / "src" / "apmoe" / "weights"
-        if not (pkg_weights / "keystroke_constants.json").exists():
-            pytest.skip("Package weights not present in this environment")
+    def test_without_builtin_does_not_copy_builtin_assets(self, tmp_path: Path) -> None:
+        """Without ``--builtin``, no bundled weight files are copied."""
         runner = CliRunner()
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "myproject"])
-            assert (Path("myproject") / "weights" / "keystroke_constants.json").is_file()
+            result = runner.invoke(cli, ["init", "myproject"])
+
+            assert result.exit_code == 0, result.output
+            assert not (Path("myproject") / "weights" / "face_age_expert_v1.keras").exists()
+            assert not (Path("myproject") / "weights" / "keystroke_age_expert.onnx").exists()
+            assert not (Path("myproject") / "weights" / "keystroke_constants.json").exists()
+
+    @patch("apmoe.cli.main._find_repo_weights_dir", return_value=None)
+    def test_builtin_exits_nonzero_when_assets_root_missing(
+        self, _mock_find_weights: MagicMock, tmp_path: Path
+    ) -> None:
+        """``--builtin`` exits non-zero when bundled assets cannot be located."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            result = runner.invoke(cli, ["init", "myproject", "--builtin"])
+
+            assert result.exit_code != 0
+            assert "Builtin weights directory was not found" in result.output
 
     def test_creates_readme(self, tmp_path: Path) -> None:
         """A ``README.md`` file is written inside the project directory."""
