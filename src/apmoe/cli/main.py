@@ -23,6 +23,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -334,7 +335,12 @@ def cli() -> None:
 
 @cli.command(context_settings=_CLI_CONTEXT_SETTINGS)
 @click.argument("project_name", default="my_apmoe_project", metavar="[PROJECT_NAME]")
-def init(project_name: str) -> None:
+@click.option(
+    "--builtin",
+    is_flag=True,
+    help="Copy bundled face and keystroke built-in models into the generated project's weights directory.",
+)
+def init(project_name: str, builtin: bool) -> None:
     r"""Scaffold a new APMoE project directory.
 
     Creates PROJECT_NAME/ with a config template wired to the built-in Keras
@@ -367,10 +373,11 @@ def init(project_name: str) -> None:
     weights_dest = project_dir / "weights"
     weights_dest.mkdir()
 
-    # Copy default pretrained models bundled with the package.
+    # Copy default pretrained models bundled with the package if --builtin is passed.
     _pkg_weights = Path(__file__).parent.parent / "weights"
     copied: list[str] = []
-    if _pkg_weights.is_dir():
+    
+    if builtin and _pkg_weights.is_dir():
         for src_file in sorted(_pkg_weights.iterdir()):
             if src_file.is_file():
                 shutil.copy2(src_file, weights_dest / src_file.name)
