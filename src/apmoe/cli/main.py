@@ -367,8 +367,14 @@ def init(project_name: str) -> None:
     weights_dest = project_dir / "weights"
     weights_dest.mkdir()
 
-    config_content = _CONFIG_TEMPLATE.replace("{package}", package_name)
-    (project_dir / "config.json").write_text(config_content, encoding="utf-8")
+    # Copy default pretrained models bundled with the package.
+    _pkg_weights = Path(__file__).parent.parent / "weights"
+    copied: list[str] = []
+    if _pkg_weights.is_dir():
+        for src_file in sorted(_pkg_weights.iterdir()):
+            if src_file.is_file():
+                shutil.copy2(src_file, weights_dest / src_file.name)
+                copied.append(src_file.name)
 
     if not copied:
         # Fallback: write a .gitkeep so the directory is not entirely empty.
@@ -408,8 +414,12 @@ def init(project_name: str) -> None:
         f"  {project_name}/custom_aggregator.py - optional custom AggregatorStrategy stubs"
     )
     click.echo(f"  {project_name}/config.json        — edit to configure your components")
-    click.echo(f"  {project_name}/custom_expert.py   — example ExpertPlugin implementation")
-    click.echo(f"  {project_name}/weights/            — place pretrained .pt files here")
+    click.echo(f"  {project_name}/custom_expert.py   — optional custom ExpertPlugin stubs")
+    if copied:
+        for name in copied:
+            click.echo(f"  {project_name}/weights/{name}")
+    else:
+        click.echo(f"  {project_name}/weights/            — place pretrained model files here")
     click.echo(f"  {project_name}/README.md           — quick-start instructions")
     click.echo()
     click.echo("Next steps:")
