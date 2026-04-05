@@ -3,8 +3,8 @@
 Commands
 --------
 ``apmoe init [project-name]``
-    Scaffold a new project directory with a config template and an example
-    custom expert implementation.
+    Scaffold a new project directory with a config template and starter stubs
+    for every major extension point.
 
 ``apmoe serve --config <path>``
     Load pretrained models from a JSON config file and start the FastAPI
@@ -88,6 +88,94 @@ _CONFIG_TEMPLATE: str = """\
 }
 """
 
+_PROCESSOR_TEMPLATE: str = '''\
+"""Optional custom modality processors for {project_name}.
+
+Use this file when you want a custom :class:`~apmoe.modality.base.ModalityProcessor`.
+Point a modality ``"processor"`` entry in ``config.json`` at
+``"custom_processor.YourClassName"``.
+"""
+
+from __future__ import annotations
+
+# Example imports when you add your own processor:
+# from apmoe.core.types import ModalityData
+# from apmoe.modality.base import ModalityProcessor
+#
+#
+# class MyCustomProcessor(ModalityProcessor):
+#     @property
+#     def modality_name(self) -> str:
+#         return "image"
+#
+#     def validate(self, data: object) -> bool:
+#         return data is not None
+#
+#     def preprocess(self, data: object) -> ModalityData:
+#         return ModalityData(modality=self.modality_name, data=data)
+'''
+
+_CLEANER_TEMPLATE: str = '''\
+"""Optional custom cleaners for {project_name}.
+
+Use this file when you want a custom :class:`~apmoe.processing.base.CleanerStrategy`.
+Point a modality pipeline ``"cleaner"`` entry in ``config.json`` at
+``"custom_cleaner.YourClassName"``.
+"""
+
+from __future__ import annotations
+
+# Example imports when you add your own cleaner:
+# from apmoe.core.types import ModalityData
+# from apmoe.processing.base import CleanerStrategy
+#
+#
+# class MyCustomCleaner(CleanerStrategy):
+#     def clean(self, data: ModalityData) -> ModalityData:
+#         return data
+'''
+
+_ANONYMIZER_TEMPLATE: str = '''\
+"""Optional custom anonymizers for {project_name}.
+
+Use this file when you want a custom :class:`~apmoe.processing.base.AnonymizerStrategy`.
+Point a modality pipeline ``"anonymizer"`` entry in ``config.json`` at
+``"custom_anonymizer.YourClassName"``.
+"""
+
+from __future__ import annotations
+
+# Example imports when you add your own anonymizer:
+# from apmoe.core.types import ModalityData
+# from apmoe.processing.base import AnonymizerStrategy
+#
+#
+# class MyCustomAnonymizer(AnonymizerStrategy):
+#     def anonymize(self, data: ModalityData) -> ModalityData:
+#         return data
+'''
+
+_EMBEDDER_TEMPLATE: str = '''\
+"""Optional custom embedders for {project_name}.
+
+Use this file when you want a custom :class:`~apmoe.processing.base.EmbedderStrategy`.
+Point a modality pipeline ``"embedder"`` entry in ``config.json`` at
+``"custom_embedder.YourClassName"``.
+"""
+
+from __future__ import annotations
+
+# Example imports when you add your own embedder:
+# import numpy as np
+# from apmoe.core.types import EmbeddingResult, ModalityData
+# from apmoe.processing.base import EmbedderStrategy
+#
+#
+# class MyCustomEmbedder(EmbedderStrategy):
+#     def embed(self, data: ModalityData) -> EmbeddingResult:
+#         return EmbeddingResult(modality=data.modality, embedding=np.array([0.0]))
+'''
+
 _EXPERT_TEMPLATE: str = '''\
 """Optional custom experts for {project_name}.
 
@@ -122,6 +210,31 @@ from __future__ import annotations
 #         ...
 '''
 
+_AGGREGATOR_TEMPLATE: str = '''\
+"""Optional custom aggregators for {project_name}.
+
+Use this file when you want a custom :class:`~apmoe.aggregation.base.AggregatorStrategy`.
+Point the aggregation ``"strategy"`` entry in ``config.json`` at
+``"custom_aggregator.YourClassName"``.
+"""
+
+from __future__ import annotations
+
+# Example imports when you add your own aggregator:
+# from apmoe.aggregation.base import AggregatorStrategy
+# from apmoe.core.types import ExpertOutput, Prediction
+#
+#
+# class MyCustomAggregator(AggregatorStrategy):
+#     def aggregate(self, outputs: list[ExpertOutput]) -> Prediction:
+#         output = outputs[0]
+#         return Prediction(
+#             predicted_age=output.predicted_age,
+#             confidence=output.confidence,
+#             per_expert_outputs=list(outputs),
+#         )
+'''
+
 _README_TEMPLATE: str = """\
 # {project_name}
 
@@ -130,7 +243,7 @@ An APMoE project for age prediction using Mixture of Experts.
 ## Quick Start
 
 1. **Configure**: Edit `config.json` to point to your processor, cleaner,
-   anonymizer, embedder, and expert implementations.
+   anonymizer, embedder, expert, and aggregator implementations.
 
 2. **Weights**: Default models are already under `weights/`. Replace or add
    files there if you train your own checkpoints (and update paths in `config.json`).
@@ -155,15 +268,25 @@ An APMoE project for age prediction using Mixture of Experts.
 ```
 {project_name}/
   config.json          # Framework configuration (built-in Keras + ONNX experts)
+  custom_processor.py  # Optional: your own ModalityProcessor stubs
+  custom_cleaner.py    # Optional: your own CleanerStrategy stubs
+  custom_anonymizer.py # Optional: your own AnonymizerStrategy stubs
+  custom_embedder.py   # Optional: your own EmbedderStrategy stubs
   custom_expert.py     # Optional: your own ExpertPlugin (default config uses builtins)
+  custom_aggregator.py # Optional: your own AggregatorStrategy stubs
   weights/             # face_age_expert.keras, keystroke_*.onnx, keystroke_constants.json
   README.md            # This file
 ```
 
 ## Extending the Framework
 
+- Subclass `ModalityProcessor` in `custom_processor.py`.
+- Subclass `CleanerStrategy` in `custom_cleaner.py`.
+- Subclass `AnonymizerStrategy` in `custom_anonymizer.py`.
+- Subclass `EmbedderStrategy` in `custom_embedder.py` when you need embeddings.
 - Subclass `ExpertPlugin` in `custom_expert.py`.
-- Register your class in `config.json` under `"experts"`.
+- Subclass `AggregatorStrategy` in `custom_aggregator.py`.
+- Reference your custom classes in `config.json` with dotted paths like `"custom_expert.MyCustomExpert"`.
 - See the [APMoE documentation](https://github.com/your-org/apmoe) for details.
 """
 
@@ -216,8 +339,8 @@ def init(project_name: str) -> None:
     r"""Scaffold a new APMoE project directory.
 
     Creates PROJECT_NAME/ with a config template wired to the built-in Keras
-    and ONNX experts, bundled default weights, a ``custom_expert.py`` placeholder,
-    and a README.
+    and ONNX experts, bundled default weights, starter stubs for every major
+    extension point, and a README.
 
     \b
     Files created:
@@ -260,13 +383,37 @@ def init(project_name: str) -> None:
 
     (project_dir / "config.json").write_text(_CONFIG_TEMPLATE, encoding="utf-8")
 
-    expert_content = _EXPERT_TEMPLATE.replace("{project_name}", project_name)
-    (project_dir / "custom_expert.py").write_text(expert_content, encoding="utf-8")
+    template_files = {
+        "custom_processor.py": _PROCESSOR_TEMPLATE,
+        "custom_cleaner.py": _CLEANER_TEMPLATE,
+        "custom_anonymizer.py": _ANONYMIZER_TEMPLATE,
+        "custom_embedder.py": _EMBEDDER_TEMPLATE,
+        "custom_expert.py": _EXPERT_TEMPLATE,
+        "custom_aggregator.py": _AGGREGATOR_TEMPLATE,
+    }
+    for filename, template in template_files.items():
+        content = template.replace("{project_name}", project_name)
+        (project_dir / filename).write_text(content, encoding="utf-8")
 
     readme_content = _README_TEMPLATE.replace("{project_name}", project_name)
     (project_dir / "README.md").write_text(readme_content, encoding="utf-8")
 
     click.echo(click.style(f"Created project '{project_name}/'", fg="green"))
+    click.echo(
+        f"  {project_name}/custom_processor.py - optional custom ModalityProcessor stubs"
+    )
+    click.echo(
+        f"  {project_name}/custom_cleaner.py   - optional custom CleanerStrategy stubs"
+    )
+    click.echo(
+        f"  {project_name}/custom_anonymizer.py - optional custom AnonymizerStrategy stubs"
+    )
+    click.echo(
+        f"  {project_name}/custom_embedder.py  - optional custom EmbedderStrategy stubs"
+    )
+    click.echo(
+        f"  {project_name}/custom_aggregator.py - optional custom AggregatorStrategy stubs"
+    )
     click.echo(f"  {project_name}/config.json        — edit to configure your components")
     click.echo(f"  {project_name}/custom_expert.py   — optional custom ExpertPlugin stubs")
     if copied:

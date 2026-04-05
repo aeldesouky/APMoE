@@ -142,6 +142,23 @@ class TestInitCommand:
             runner.invoke(cli, ["init", "myproject"])
             assert (Path("myproject") / "custom_expert.py").is_file()
 
+    def test_creates_extension_stub_files(self, tmp_path: Path) -> None:
+        """The scaffold includes starter files for all major extension points."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "myproject"])
+            project_dir = Path("myproject")
+            expected_files = {
+                "custom_processor.py",
+                "custom_cleaner.py",
+                "custom_anonymizer.py",
+                "custom_embedder.py",
+                "custom_expert.py",
+                "custom_aggregator.py",
+            }
+            actual_files = {path.name for path in project_dir.iterdir() if path.is_file()}
+            assert expected_files.issubset(actual_files)
+
     def test_creates_weights_directory(self, tmp_path: Path) -> None:
         """A ``weights/`` subdirectory is created for pretrained files."""
         runner = CliRunner()
@@ -227,7 +244,12 @@ class TestInitCommand:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             result = runner.invoke(cli, ["init", "proj"])
             assert "config.json" in result.output
+            assert "custom_processor.py" in result.output
+            assert "custom_cleaner.py" in result.output
+            assert "custom_anonymizer.py" in result.output
+            assert "custom_embedder.py" in result.output
             assert "custom_expert.py" in result.output
+            assert "custom_aggregator.py" in result.output
             assert "weights" in result.output
 
     def test_init_short_help(self) -> None:

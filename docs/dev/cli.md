@@ -30,7 +30,12 @@ Generated structure:
 ```text
 my_apmoe_project/
   config.json
+  custom_processor.py
+  custom_cleaner.py
+  custom_anonymizer.py
+  custom_embedder.py
   custom_expert.py
+  custom_aggregator.py
   weights/
     .gitkeep
   README.md
