@@ -23,7 +23,6 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
-import shutil
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -290,12 +289,6 @@ An APMoE project for age prediction using Mixture of Experts.
 - See the [APMoE documentation](https://github.com/your-org/apmoe) for details.
 """
 
-_BUILTIN_WEIGHT_FILES: tuple[str, ...] = (
-    "face_age_expert_v1.keras",
-    "keystroke_age_expert.onnx",
-    "keystroke_constants.json",
-)
-
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -317,19 +310,6 @@ def _prediction_to_json(prediction: Prediction) -> str:
     """
     d = dataclasses.asdict(prediction)
     return json.dumps(d, indent=2, default=str)
-
-
-def _find_repo_weights_dir() -> Path | None:
-    """Return the nearest repository ``weights/`` directory, if available.
-
-    Walks parent directories starting from this module file to support local
-    development runs where built-in assets live at repository root.
-    """
-    for parent in Path(__file__).resolve().parents:
-        candidate = parent / "weights"
-        if candidate.is_dir():
-            return candidate
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -354,15 +334,7 @@ def cli() -> None:
 
 @cli.command(context_settings=_CLI_CONTEXT_SETTINGS)
 @click.argument("project_name", default="my_apmoe_project", metavar="[PROJECT_NAME]")
-@click.option(
-    "--builtin",
-    is_flag=True,
-    help=(
-        "Copy bundled face/keystroke built-in model assets into "
-        "PROJECT_NAME/weights/."
-    ),
-)
-def init(project_name: str, builtin: bool) -> None:
+def init(project_name: str) -> None:
     r"""Scaffold a new APMoE project directory.
 
     Creates PROJECT_NAME/ with a config template wired to the built-in Keras
@@ -394,39 +366,6 @@ def init(project_name: str, builtin: bool) -> None:
     project_dir.mkdir(parents=True)
     weights_dest = project_dir / "weights"
     weights_dest.mkdir()
-
-    if builtin:
-        builtin_weights_dir = _find_repo_weights_dir()
-        if builtin_weights_dir is None:
-            click.echo(
-                click.style(
-                    "Error: Builtin weights directory was not found in this installation.",
-                    fg="red",
-                ),
-                err=True,
-            )
-            sys.exit(1)
-
-        missing_files = [
-            filename
-            for filename in _BUILTIN_WEIGHT_FILES
-            if not (builtin_weights_dir / filename).is_file()
-        ]
-        if missing_files:
-            click.echo(
-                click.style(
-                    "Error: Missing bundled weight files: " + ", ".join(missing_files),
-                    fg="red",
-                ),
-                err=True,
-            )
-            sys.exit(1)
-
-        for filename in _BUILTIN_WEIGHT_FILES:
-            shutil.copy2(
-                builtin_weights_dir / filename,
-                project_dir / "weights" / filename,
-            )
 
     config_content = _CONFIG_TEMPLATE.replace("{package}", package_name)
     (project_dir / "config.json").write_text(config_content, encoding="utf-8")
@@ -471,8 +410,6 @@ def init(project_name: str, builtin: bool) -> None:
     click.echo(f"  {project_name}/config.json        — edit to configure your components")
     click.echo(f"  {project_name}/custom_expert.py   — example ExpertPlugin implementation")
     click.echo(f"  {project_name}/weights/            — place pretrained .pt files here")
-    if builtin:
-        click.echo("    └─ copied bundled face/keystroke weight files")
     click.echo(f"  {project_name}/README.md           — quick-start instructions")
     click.echo()
     click.echo("Next steps:")
