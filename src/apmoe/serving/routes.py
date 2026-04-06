@@ -22,6 +22,12 @@ from fastapi.responses import JSONResponse
 
 from apmoe.core.exceptions import APMoEError, PipelineError
 from apmoe.core.types import Prediction
+from apmoe.serving.openapi_schemas import (
+    HealthResponse,
+    InfoResponse,
+    PredictRequestBody,
+    PredictionResponse,
+)
 
 if TYPE_CHECKING:
     from apmoe.core.app import APMoEApp
@@ -99,84 +105,27 @@ def create_router(apmoe_app: APMoEApp) -> APIRouter:
 
     @router.post(
         "/predict",
-        summary="Multimodal age prediction",
-        response_description="Aggregated age prediction with per-expert breakdown.",
+        response_model=PredictionResponse,
+        summary="Predict age from multimodal JSON",
+        response_description=(
+            "Aggregated age estimate, confidence, optional interval, per-expert rows, "
+            "skipped experts, and pipeline metadata."
+        ),
         tags=["Inference"],
-    )
-    async def predict(request: Request) -> dict[str, Any]:
-        """Run the inference pipeline from a JSON request body.
-
-        The body must be a JSON **object** where each key is a modality name
-        and the value is the raw session data for that modality.
-
-        **Keystroke example:**
-
-        .. code-block:: json
-
-            {
-              "keystroke": [
-                [8,  0,  95.0],
-                [13, 0, 100.0],
-                [65, 83, 145.2],
-                [79, 32, 261.0]
-              ]
-            }
-
-        Each value is serialised to UTF-8 JSON bytes and passed to the
-        corresponding modality processor.  Accepted value shapes (auto-detected
-        by the processor):
-
-        * **List of triples** ``[[key1, key2, ms], ...]`` — keystroke sessions
-        * **Dict of lists** ``{"dur_8": [95, 102], ...}`` — pre-computed features
-        * **String** — raw IKDD text (``"8-0,95.0\\n13-0,100.0\\n..."``)
-
-        Modalities absent from the body are skipped gracefully; the experts
-        that required them are listed in ``skipped_experts``.
-
-        Returns:
-            JSON object containing:
-
-            * ``predicted_age`` — best age estimate in years.
-            * ``confidence`` — aggregated confidence in ``[0, 1]``.
-            * ``confidence_interval`` — ``[lower, upper]`` or ``null``.
-            * ``per_expert_outputs`` — list of per-expert prediction dicts.
-            * ``skipped_experts`` — names of experts that could not run.
-            * ``metadata`` — pipeline-level metadata.
-
-        Raises:
-            HTTPException 422: If the body is not valid JSON or not a JSON object.
-            HTTPException 503: If the pipeline has no runnable experts.
-            HTTPException 500: For unexpected framework errors.
-        """
-        correlation_id: str = getattr(request.state, "correlation_id", "-")
-
-        # --- Parse JSON body ---
-        try:
-            body = await request.json()
-        except Exception as exc:
-            logger.warning(
-                "[%s] 422 Bad request — body is not valid JSON: %s",
-                correlation_id,
-                exc,
-            )
-            raise HTTPException(
-                status_code=422,
-                detail=f"Request body is not valid JSON: {exc}",
-            ) from exc
-
-        if not isinstance(body, dict):
-            logger.warning(
-                "[%s] 422 Bad request — expected JSON object, got %s",
-                correlation_id,
-                type(body).__name__,
-            )
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "JSON body must be an object whose keys are modality names. "
-                    f"Got {type(body).__name__}."
+        responses={
+            422: {
+                "description": (
+                    "Malformed JSON, or JSON value that cannot be parsed as an object "
+                    "(e.g. top-level array)."
                 ),
-            )
+            },
+            503: {"description": "Pipeline could not run any expert (e.g. all skipped)."},
+            500: {"description": "Framework error during inference."},
+        },
+    )
+    async def predict(request: Request, body: PredictRequestBody) -> PredictionResponse:
+        """Run inference. Request/response schemas and **Examples** are defined in OpenAPI."""
+        correlation_id: str = getattr(request.state, "correlation_id", "-")
 
         # Serialise each value to UTF-8 JSON bytes so every modality processor
         # receives a consistent bytes payload regardless of the value type.
@@ -209,7 +158,7 @@ def create_router(apmoe_app: APMoEApp) -> APIRouter:
             )
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-        return _prediction_to_dict(prediction)
+        return PredictionResponse.model_validate(_prediction_to_dict(prediction))
 
     # ------------------------------------------------------------------
     # GET /health
@@ -217,27 +166,17 @@ def create_router(apmoe_app: APMoEApp) -> APIRouter:
 
     @router.get(
         "/health",
-        summary="Readiness / liveness probe",
-        response_description="Expert health status and overall readiness.",
+        response_model=HealthResponse,
+        summary="Health check",
+        response_description='Overall `"healthy"` or `"degraded"` plus per-expert load status.',
         tags=["Operations"],
+        responses={
+            200: {"description": "All experts loaded (or none registered)."},
+            503: {"description": "One or more experts failed to load weights."},
+        },
     )
     async def health() -> dict[str, Any]:
-        """Return the health status of all loaded expert plugins.
-
-        Queries :meth:`~apmoe.experts.registry.ExpertRegistry.health_check`
-        to determine whether every registered expert has successfully loaded
-        its pretrained weights.
-
-        Returns:
-            JSON object with:
-
-            * ``status`` — ``"healthy"`` if all experts are loaded, otherwise
-              ``"degraded"``.
-            * ``experts`` — mapping of expert name → boolean loaded status.
-
-        Raises:
-            HTTPException 503: If one or more experts are not loaded.
-        """
+        """Expert weight load status; returns **503** when any expert is not loaded."""
         expert_health: dict[str, bool] = apmoe_app.expert_registry.health_check()
         all_healthy = all(expert_health.values()) if expert_health else True
         status = "healthy" if all_healthy else "degraded"
@@ -264,26 +203,13 @@ def create_router(apmoe_app: APMoEApp) -> APIRouter:
 
     @router.get(
         "/info",
-        summary="Framework information",
-        response_description="Version, loaded experts, active modalities, and serving config.",
+        response_model=InfoResponse,
+        summary="Framework metadata",
+        response_description="Version, experts, modalities, aggregator, and serving settings snapshot.",
         tags=["Operations"],
     )
     async def info() -> dict[str, Any]:
-        """Return metadata about the running APMoE framework instance.
-
-        Delegates to :meth:`~apmoe.core.app.APMoEApp.get_info`, which
-        aggregates version, expert, modality, aggregator, and serving config
-        information into a single JSON-serialisable dict.
-
-        Returns:
-            JSON object with:
-
-            * ``version`` — framework version string.
-            * ``experts`` — list of per-expert info dicts.
-            * ``modalities`` — list of active modality names.
-            * ``aggregator`` — aggregator info dict.
-            * ``serving`` — serving config dict.
-        """
+        """Runtime snapshot from ``APMoEApp.get_info()`` (version, experts, config)."""
         return apmoe_app.get_info()
 
     return router

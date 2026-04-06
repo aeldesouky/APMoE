@@ -22,10 +22,7 @@ existing ASGI app by calling `create_api(...)` directly.
 ### `POST /predict`
 
 Request:
-- `multipart/form-data`
-- field name = modality name (`visual`, `audio`, etc.)
-- file field values are read as bytes
-- text fields are forwarded as raw strings
+- `application/json` body: an object whose keys are modality names and whose values are JSON-serialisable payloads for that modality (values are normalised to bytes before the pipeline).
 
 Response (`200`):
 - `predicted_age`
@@ -38,7 +35,7 @@ Response (`200`):
 Error mapping:
 - `PipelineError` -> `503`
 - other `APMoEError` -> `500`
-- malformed multipart parse -> `422`
+- body not valid JSON or not a JSON object -> `422`
 
 ### `GET /health`
 

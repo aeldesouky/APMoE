@@ -4,16 +4,19 @@ This document maps the APMoE framework's features and implementation status to t
 
 ## 1. MVP Features Checklist
 
-| Feature Component | Status | Evidence |
+Status uses **fully implemented** for behavior that matches the stated design in code and docs today, and **partially implemented** when the core path works but behavior is optional, stubbed, or still being hardened.
+
+| Feature area | Status | Evidence / gaps |
 | :--- | :--- | :--- |
-| **Project Initialization (CLI)** | Implemented | `apmoe init` command creating project scaffolding with built-in weights (`--builtin`). |
-| **Framework Extensibility (IoC)** | Implemented | `config.json` defining `ModalityProcessor`, `Cleaner`, `Anonymizer`, and custom `ExpertPlugin` paths. |
-| **Configuration Validation** | Implemented | `apmoe validate` schema, path resolution, and health checks. |
-| **Multimodal AI Pipeline** | Implemented | Image and Keystroke modality processors, cleaners, anonymizers, and optional embedders processing via `apmoe predict`. |
-| **Model Prediction (MoE)** | Implemented | Keras (Face) and ONNX (Keystroke) expert plugins executing independently and aggregating results. |
-| **Backend API (Serving)** | Implemented | `apmoe serve` starting FastAPI server with `/predict`, `/health`, and `/info` endpoints. |
-| **Middleware & DX** | Implemented | Rate Limiting, CORS, Auth hooks, correlation logging, and rigid `APMoEError` handling. |
-| **API Dashboard View** | Implemented | Swagger UI automatically available at `/docs` when serving. |
+| **CLI & generated projects** | Fully implemented | Scaffold, validate, predict, serve; generated config, stubs, optional bundled weights. |
+| **Inversion of Control & configuration** | Fully implemented | One validated JSON config wires components by path/name; no core edits required. |
+| **Multimodal pipeline (built-ins + extensibility)** | Fully implemented | Built-in modalities work out of the box; swap or extend every stage via config and IoC. |
+| **Mixture-of-experts inference & aggregation** | Partially implemented | MoE + default aggregator shipped; uneven confidence semantics; experts run sequentially. |
+| **HTTP API & interactive docs** | Partially implemented | FastAPI, JSON prediction body, health/info, OpenAPI UI; no multipart in MVP. |
+| **CORS, authentication & rate limiting** | Partially implemented (stubs / optional) | CORS/auth are wiring stubs, not full hardening; rate limit opt-in; correlation logging on. |
+| **Developer documentation (primary DX artifact)** | Fully implemented | `docs/dev/`, config and integration notes, DX overview—authoritative for extension. |
+| **Other project & user-facing docs** | To be updated for final delivery | Root README and narrative copy deferred to final project polish. |
+| **Error handling & diagnostics (DX)** | Fully implemented | Typed errors, fast config validation, clear CLI/HTTP errors, request correlation. |
 
 ## 2. Demo Video Plan (2–3 minutes)
 

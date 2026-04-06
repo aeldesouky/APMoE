@@ -28,7 +28,7 @@ class ModalityProcessor(ABC):
         raises ModalityError and skips this modality for the current request.
 
         Args:
-            data: Raw bytes from the HTTP multipart upload.
+            data: Raw bytes from the caller (e.g. HTTP JSON serialised to bytes, or CLI file reads).
 
         Returns:
             True if the input is valid and processing should continue.
@@ -43,7 +43,7 @@ class ModalityProcessor(ABC):
         transformation step — decode, resize, resample, normalise, etc.
 
         Args:
-            data: Raw bytes from the HTTP multipart upload.
+            data: Raw bytes from the caller (e.g. HTTP JSON serialised to bytes, or CLI file reads).
 
         Returns:
             A ModalityData with modality set to this processor's modality name.

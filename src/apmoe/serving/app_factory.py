@@ -25,6 +25,7 @@ from apmoe.serving.middleware import (
     RateLimitMiddleware,
     RequestLoggingMiddleware,
 )
+from apmoe.serving.openapi_schemas import OPENAPI_DESCRIPTION, OPENAPI_TAGS
 from apmoe.serving.routes import create_router
 
 if TYPE_CHECKING:
@@ -85,12 +86,9 @@ def create_api(
 
     api = FastAPI(
         title="APMoE — Age Prediction using Mixture of Experts",
-        description=(
-            "Inference-only multimodal age prediction framework.  "
-            "Send a JSON object or multipart form to ``POST /predict`` "
-            "where each key/field name is a modality name."
-        ),
+        description=OPENAPI_DESCRIPTION,
         version=apmoe.__version__,
+        openapi_tags=OPENAPI_TAGS,
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
