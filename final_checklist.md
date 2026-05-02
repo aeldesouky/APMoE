@@ -169,8 +169,8 @@
 
 | # | Question | Status | Evidence / Gap |
 | :--- | :--- | :---: | :--- |
-| 12.1 | Does your README include clear setup and run steps? | 🔄 | `README.md` exists. `apmoe init`-generated projects get a `README.md` with quick-start steps. **The root repository README** needs to be verified for completeness (install from source, dev setup, run tests). |
-| 12.2 | Can someone run your system without asking you questions? | 🔄 | `apmoe init --builtin && apmoe serve` is self-contained **if the user already has Python 3.11+ and the package installed**. There is no Docker image, so environment setup (Python version, dependency install) requires reading the README. |
+| 12.1 | Does your README include clear setup and run steps? | ✅ | **DONE.** `README.md` now explicitly documents Python 3.11+ requirements, virtual environment setup, editable source installation, test execution, scaffolding, configuration validation, and API serving commands. |
+| 12.2 | Can someone run your system without asking you questions? | ✅ | **DONE.** Yes. The combination of `apmoe init --builtin && apmoe serve --config config.json` handles everything internally (creating configs, extracting weights). The `README.md` clearly bridges the gap on how to setup the Python environment required to run those two commands. |
 | 12.3 | Did you document architecture and APIs? | ✅ | Architecture documented in the progress report (Implementation & Testing Report 1) with component responsibilities, design patterns, and file/line references. APIs documented via Swagger at `/docs`. |
 
 ---
