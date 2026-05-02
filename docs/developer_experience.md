@@ -88,20 +88,59 @@ APMoE's true power lies in its dependency injection architecture. Instead of har
 3. **Experts (MoE)**: Isolated inference modules (`ExpertPlugin`). The developer specifies required modalities (e.g., `["keystroke"]`), and the framework automatically isolates the data and invokes each expert concurrently.
 4. **Aggregators**: Combine multiple `ExpertOutput` objects into a single final `Prediction`. The built-in `WeightedAverageAggregator` natively handles confidence/value arithmetic, but custom heuristic combiners can be easily plugged in.
 
-Developers only need to use module-level singletons to inject their logic:
-```python
-from apmoe import expert_registry, ExpertPlugin
-
-@expert_registry.register("my_domain_expert")
-class DomainExpert(ExpertPlugin):
-    # Implementation here
-```
-
 ## 6. Serving Middleware and Security Out-of-the-Box
 
 The `apmoe serve` command generates a robust FastAPI ASGI application wrapped in multiple layers of production-ready middleware:
 
+**✅ Currently Implemented:**
 - **CORS Middleware**: Native, configurable Cross-Origin settings to allow immediate web dashboard integrations.
 - **Request Logging**: Built-in correlation ID tracking (`X-Correlation-ID`) tied to structured logs for every inbound request.
 - **Rate Limiting**: In-memory sliding window rate limits capable of protecting heavy AI inference endpoints from exhaustion.
 - **AuthPlugin Hook**: A clean, abstract interface for authentication. Developers can pass an `AuthPlugin` instance directly to `create_api()`, automatically gating endpoints without needing to manipulate FastAPI's routing directly.
+
+**🔄 In Progress:**
+- **Authorization & Access Control**: While authentication (identity verification) is handled via the `AuthPlugin`, granular authorization is actively being developed. Future updates will introduce role-based access control (RBAC) and endpoint-level permissions directly in the serving layer.
+
+## 7. Observability
+
+APMoE treats observability as a first-class citizen so that integrators have full visibility into the framework's operational health.
+
+**✅ Currently Implemented:**
+- **Structured Telemetry**: Every HTTP request emits a JSON-structured log with latency, HTTP status, and an auto-generated `X-Correlation-ID`.
+- **Pipeline Metrics**: The final prediction object tracks `pipeline_latency_s`, `skipped_experts`, and `failed_modalities`.
+- **Health & Readiness**: `GET /v1/health` dynamically queries `ExpertRegistry.health_check()`, returning `{"status": "healthy"}` only if all models are loaded in memory. If any fail, it gracefully returns a 503 degraded status.
+
+**🔄 In Progress:**
+- **Full User-Facing Observability**: We are extending the framework to provide complete, zero-configuration observability suites natively for users. This will allow integrators to monitor system health, individual expert performance, and traffic analysis seamlessly.
+- **Prometheus Metrics Endpoint (`/metrics`)**: Currently, logs are localized to the uvicorn worker process. Once implemented, APMoE will expose a `/metrics` route allowing Grafana/Prometheus to natively scrape real-time error rates, RPS (requests per second), and latency percentiles.
+
+## 8. User Experience (UX)
+
+While APMoE is an API framework, the "user" is the client application integrator. The UX is designed to be highly deterministic and actionable.
+
+**✅ Currently Implemented:**
+- **Actionable Fallbacks**: Instead of failing blindly, missing data results in partial predictions, returning exactly what succeeded and what failed.
+- **Proactive Guidance**: The Below-Threshold recommendation engine transforms low-confidence failures into clear, human-readable instructions.
+- **Consistent Response Shapes**: Errors always return a predictable `{"detail": "..."}` shape with appropriate HTTP status codes (422 for malformed payloads, 503 for unavailable experts).
+
+## 9. Frictionless Setup & Documentation
+
+**✅ Currently Implemented:**
+- **Explicit Setup Documentation**: The root `README.md` provides explicit, copy-pasteable instructions for isolating Python 3.11+ environments, installing dependencies from source, and running the test suite.
+- **Zero-to-Serve Guide**: The documentation walks the developer linearly through scaffolding (`apmoe init --builtin`), validation (`apmoe validate`), and serving (`apmoe serve`).
+- **Localized Context**: In addition to the root documentation, `apmoe init` natively scaffolds a localized `README.md` tailored specifically to the newly generated project structure.
+
+**🔄 In Progress:**
+- **PyPI Package Release**: We are preparing the package for public registry distribution. Soon, setup will be as completely frictionless as running `pip install apmoe` directly from PyPI, entirely bypassing the need to clone the repository manually.
+- **Docker Support**: Complete environment isolation is pending. We are actively finalizing a `Dockerfile` and `docker-compose.yml`. Once implemented, *any* user will be able to bypass Python setup entirely by simply running `docker compose up`.
+
+## 10. Fine-Tuning (Integrator-Supplied Data)
+
+**🔄 In Progress**
+
+The architecture for integrator-led fine-tuning is fully designed, but the implementation is pending. 
+
+Currently, the `ExpertPlugin` Abstract Base Class provides a `load_weights()` hook for initialization. In the future state:
+1. `ExpertPlugin` will expose a `finetune()` ABC hook.
+2. Developers will be able to trigger this dynamically via an `apmoe finetune` CLI command or a `POST /finetune` HTTP endpoint.
+3. This will allow integrators to adapt the bundled ONNX or Keras experts to their specific domain data without altering the framework's core code.
