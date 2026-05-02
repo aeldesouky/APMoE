@@ -53,6 +53,12 @@ logger = logging.getLogger("apmoe.serving")
 
 #: Environment variable key used to pass the config path to worker processes.
 _WORKER_CONFIG_ENV_KEY = "APMOE_CONFIG_PATH"
+_API_VERSION = "1"
+_LEGACY_DEPRECATION_HEADERS: dict[str, str] = {
+    "Deprecation": "Sun, 03 May 2026 00:00:00 GMT",
+    "Sunset": "Sun, 01 Nov 2026 00:00:00 GMT",
+    "Link": '</docs>; rel="deprecation"; type="text/html"',
+}
 
 
 def create_api(
@@ -164,9 +170,17 @@ def create_api(
             content={"detail": f"Internal server error: {exc}"},
         )
 
-    # Mount route handlers
-    router = create_router(app)
-    api.include_router(router)
+    # Mount route handlers (versioned first, legacy second)
+    versioned_router = create_router(app, api_version=_API_VERSION)
+    api.include_router(versioned_router, prefix=f"/v{_API_VERSION}")
+
+    legacy_router = create_router(
+        app,
+        api_version=_API_VERSION,
+        deprecated=True,
+        deprecation_headers=_LEGACY_DEPRECATION_HEADERS,
+    )
+    api.include_router(legacy_router)
 
     return api
 

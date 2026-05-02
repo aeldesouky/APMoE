@@ -222,6 +222,23 @@ class TestPredictEndpoint:
         assert response.status_code == 200
         assert response.json()["confidence_interval"] is None
 
+
+class TestApiVersioning:
+    """Versioned and deprecated routes behave as expected."""
+
+    def test_legacy_paths_include_deprecation_headers(self, client: TestClient) -> None:
+        response = client.post("/predict", json={"keystroke": [[8, 0, 95.0]]})
+        assert response.status_code == 200
+        assert response.headers.get("Deprecation") is not None
+        assert response.headers.get("Sunset") is not None
+        assert response.headers.get("X-API-Version") == "1"
+
+    def test_v1_paths_omit_deprecation_headers(self, client: TestClient) -> None:
+        response = client.post("/v1/predict", json={"keystroke": [[8, 0, 95.0]]})
+        assert response.status_code == 200
+        assert response.headers.get("X-API-Version") == "1"
+        assert "Deprecation" not in response.headers
+
     def test_non_object_json_root_returns_422(self, client: TestClient) -> None:
         """A JSON array at the top level (not an object) returns 422."""
         response = client.post(

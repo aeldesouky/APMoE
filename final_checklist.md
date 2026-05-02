@@ -130,7 +130,7 @@
 | :--- | :--- | :---: | :--- |
 | 8.1 | Do you have documented APIs (Swagger / OpenAPI)? | ✅ | Yes. FastAPI auto-generates OpenAPI schema from Python type hints. Swagger UI is live at `GET /docs` when serving. ReDoc at `GET /redoc`. |
 | 8.2 | Are your APIs consistent in structure and error handling? | ✅ | All three endpoints return plain dicts (JSON serialized). Errors always use `{"detail": "..."}` via `HTTPException`. Status codes are consistent: 200 OK, 422 Unprocessable Entity, 503 Service Unavailable, 500 Internal Server Error. |
-| 8.3 | How would you handle API changes (versioning)? | ❌ | **NOT YET.** No API versioning strategy. No `/v1/` prefix. No `Deprecation` header mechanism. A breaking change to the `/predict` request body would break existing clients immediately. |
+| 8.3 | How would you handle API changes (versioning)? | ✅ | **Implemented (2026-05-03).** API is now versioned under `/v1` (`/v1/predict`, `/v1/health`, `/v1/info`). Legacy unversioned paths remain for backward compatibility and return `Deprecation` + `Sunset` headers (plus `X-API-Version: 1`) to communicate migration timelines. |
 
 ---
 

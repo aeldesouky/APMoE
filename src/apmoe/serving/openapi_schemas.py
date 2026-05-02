@@ -18,7 +18,9 @@ from pydantic import BaseModel, ConfigDict, Field
 OPENAPI_DESCRIPTION = """\
 ## Multimodal age prediction (MVP)
 
-Send **`POST /predict`** with **`Content-Type: application/json`**. The body must be a **JSON object** (not an array). Each **key** is a modality name from your `config.json`; each **value** is any JSON value your modality processor accepts (arrays, strings, nested objects, etc.). Missing modalities are skipped; experts that need them appear under `skipped_experts` in the response.
+Versioned endpoints live under **`/v1`** (for example, **`POST /v1/predict`**). The legacy unversioned paths (``/predict``, ``/health``, ``/info``) remain temporarily and return **`Deprecation`** and **`Sunset`** headers to signal the migration window.
+
+Send **`POST /v1/predict`** with **`Content-Type: application/json`**. The body must be a **JSON object** (not an array). Each **key** is a modality name from your `config.json`; each **value** is any JSON value your modality processor accepts (arrays, strings, nested objects, etc.). Missing modalities are skipped; experts that need them appear under `skipped_experts` in the response.
 
 ### Defaults in generated projects
 

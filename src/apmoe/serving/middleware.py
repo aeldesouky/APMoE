@@ -282,7 +282,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
             Defaults to ``{"/health", "/info"}``.
     """
 
-    _DEFAULT_EXCLUDED: frozenset[str] = frozenset({"/health", "/info"})
+    _DEFAULT_EXCLUDED: frozenset[str] = frozenset(
+        {"/health", "/info", "/v1/health", "/v1/info"}
+    )
 
     def __init__(
         self,

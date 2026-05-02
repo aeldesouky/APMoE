@@ -17,7 +17,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
 from apmoe.core.exceptions import APMoEError, PipelineError
@@ -84,7 +84,25 @@ def _prediction_to_dict(prediction: Prediction) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def create_router(apmoe_app: APMoEApp) -> APIRouter:
+def _apply_response_headers(
+    response: Response,
+    api_version: str | None,
+    deprecation_headers: dict[str, str] | None,
+) -> None:
+    """Attach API versioning and deprecation headers to the response."""
+    if api_version:
+        response.headers["X-API-Version"] = api_version
+    if deprecation_headers:
+        response.headers.update(deprecation_headers)
+
+
+def create_router(
+    apmoe_app: APMoEApp,
+    *,
+    api_version: str | None = None,
+    deprecated: bool = False,
+    deprecation_headers: dict[str, str] | None = None,
+) -> APIRouter:
     """Build and return an :class:`~fastapi.APIRouter` bound to *apmoe_app*.
 
     All three endpoints close over *apmoe_app* so they share a single
@@ -122,9 +140,13 @@ def create_router(apmoe_app: APMoEApp) -> APIRouter:
             503: {"description": "Pipeline could not run any expert (e.g. all skipped)."},
             500: {"description": "Framework error during inference."},
         },
+        deprecated=deprecated,
     )
-    async def predict(request: Request, body: PredictRequestBody) -> PredictionResponse:
+    async def predict(
+        request: Request, body: PredictRequestBody, response: Response
+    ) -> PredictionResponse:
         """Run inference. Request/response schemas and **Examples** are defined in OpenAPI."""
+        _apply_response_headers(response, api_version, deprecation_headers)
         correlation_id: str = getattr(request.state, "correlation_id", "-")
 
         # Serialise each value to UTF-8 JSON bytes so every modality processor
@@ -174,9 +196,11 @@ def create_router(apmoe_app: APMoEApp) -> APIRouter:
             200: {"description": "All experts loaded (or none registered)."},
             503: {"description": "One or more experts failed to load weights."},
         },
+        deprecated=deprecated,
     )
-    async def health() -> dict[str, Any]:
+    async def health(response: Response) -> dict[str, Any]:
         """Expert weight load status; returns **503** when any expert is not loaded."""
+        _apply_response_headers(response, api_version, deprecation_headers)
         expert_health: dict[str, bool] = apmoe_app.expert_registry.health_check()
         all_healthy = all(expert_health.values()) if expert_health else True
         status = "healthy" if all_healthy else "degraded"
@@ -207,9 +231,11 @@ def create_router(apmoe_app: APMoEApp) -> APIRouter:
         summary="Framework metadata",
         response_description="Version, experts, modalities, aggregator, and serving settings snapshot.",
         tags=["Operations"],
+        deprecated=deprecated,
     )
-    async def info() -> dict[str, Any]:
+    async def info(response: Response) -> dict[str, Any]:
         """Runtime snapshot from ``APMoEApp.get_info()`` (version, experts, config)."""
+        _apply_response_headers(response, api_version, deprecation_headers)
         return apmoe_app.get_info()
 
     return router
