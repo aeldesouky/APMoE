@@ -19,7 +19,11 @@ existing ASGI app by calling `create_api(...)` directly.
 
 ## Endpoints
 
-### `POST /predict`
+All endpoints are versioned under `/v1`. Legacy unversioned paths remain
+for backward compatibility and return `Deprecation` + `Sunset` headers to
+communicate migration timelines. Responses also include `X-API-Version: 1`.
+
+### `POST /v1/predict`
 
 Request:
 - `application/json` body: an object whose keys are modality names and whose values are JSON-serialisable payloads for that modality (values are normalised to bytes before the pipeline).
@@ -37,14 +41,14 @@ Error mapping:
 - other `APMoEError` -> `500`
 - body not valid JSON or not a JSON object -> `422`
 
-### `GET /health`
+### `GET /v1/health`
 
 Returns expert load/readiness status from `expert_registry.health_check()`.
 
 - all experts loaded (or no experts) -> `200`, `{"status": "healthy", ...}`
 - one or more unloaded -> `503`, `{"status": "degraded", ...}`
 
-### `GET /info`
+### `GET /v1/info`
 
 Returns `APMoEApp.get_info()` output:
 - framework `version`
