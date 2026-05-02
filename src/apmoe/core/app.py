@@ -84,6 +84,7 @@ class APMoEApp:
         pipeline: InferencePipeline,
         expert_registry: ExpertRegistry,
         aggregator: AggregatorStrategy,
+        config_path: str | None = None,
     ) -> None:
         """Initialise the app.  Prefer :meth:`from_config` over direct construction.
 
@@ -92,11 +93,15 @@ class APMoEApp:
             pipeline: Fully-wired inference pipeline.
             expert_registry: Live expert instance registry.
             aggregator: Active aggregation strategy.
+            config_path: Filesystem path to the JSON config file that was used
+                to build this instance.  Required for multi-worker serving
+                (see :meth:`serve`).
         """
         self._config = config
         self._pipeline = pipeline
         self._expert_registry = expert_registry
         self._aggregator = aggregator
+        self._config_path: str | None = config_path
 
     # ------------------------------------------------------------------
     # Bootstrap factory
@@ -214,6 +219,7 @@ class APMoEApp:
             chains=chains,
             expert_registry=expert_reg,
             aggregator=aggregator,
+            confidence_threshold=apmoe_cfg.confidence_threshold,
         )
 
         return cls(
@@ -221,6 +227,7 @@ class APMoEApp:
             pipeline=pipeline,
             expert_registry=expert_reg,
             aggregator=aggregator,
+            config_path=str(Path(path).resolve()),
         )
 
     # ------------------------------------------------------------------
@@ -338,10 +345,26 @@ class APMoEApp:
     def serve(self, **uvicorn_kwargs: Any) -> None:
         """Start the FastAPI HTTP serving layer.
 
-        Imports the :func:`~apmoe.serving.app_factory.create_api` factory
-        (implemented in Phase 4) to build the FastAPI application, then
-        launches ``uvicorn`` with the settings from the ``serving`` config
-        block.
+        Builds the FastAPI application via
+        :func:`~apmoe.serving.app_factory.create_api`, then launches uvicorn
+        with the settings from the ``serving`` config block.
+
+        **Single-worker mode** (``serving.workers == 1``, the default for
+        development):
+        The FastAPI app object is passed directly to ``uvicorn.run()``.
+        This is the simplest path and requires no extra environment setup.
+
+        **Multi-worker mode** (``serving.workers > 1``, recommended for
+        production):
+        uvicorn spawns separate OS processes.  Because each worker starts its
+        own interpreter, the in-process app object cannot be shared.  This
+        method therefore:
+
+        1. Writes the config file path to the ``APMOE_CONFIG_PATH`` environment
+           variable so that each worker can bootstrap an independent
+           :class:`APMoEApp` instance.
+        2. Passes ``"apmoe.serving.app_factory:create_worker_app"`` as the app
+           argument together with ``factory=True``.
 
         This method **blocks** until the server is stopped.
 
@@ -351,11 +374,18 @@ class APMoEApp:
 
         Raises:
             :class:`~apmoe.core.exceptions.ServingError`: If the serving
-                dependencies cannot be imported or uvicorn fails to start.
+                dependencies cannot be imported, if multi-worker mode is
+                requested but no config path is available, or if uvicorn fails
+                to start.
         """
+        import os
+
         try:
             import uvicorn
-            from apmoe.serving.app_factory import create_api  # type: ignore[import]
+            from apmoe.serving.app_factory import (
+                _WORKER_CONFIG_ENV_KEY,
+                create_api,
+            )
         except ImportError as exc:
             raise ServingError(
                 f"Cannot start server: {exc}.  "
@@ -363,17 +393,40 @@ class APMoEApp:
                 context={"error": str(exc)},
             ) from exc
 
-        api = create_api(self)
         serving_cfg = self._config.apmoe.serving
+        workers = serving_cfg.workers
 
-        uvicorn.run(
-            api,
-            host=serving_cfg.host,
-            port=serving_cfg.port,
-            workers=serving_cfg.workers,
-            log_level=serving_cfg.log_level,
-            **uvicorn_kwargs,
-        )
+        if workers > 1:
+            # Multi-process mode: each worker must bootstrap its own APMoEApp.
+            # uvicorn requires a string import path + factory=True for this.
+            if self._config_path is None:
+                raise ServingError(
+                    "Multi-worker serving requires a config file path.  "
+                    "Construct APMoEApp via APMoEApp.from_config() so the path "
+                    "is stored on the instance.",
+                    context={"workers": workers},
+                )
+            os.environ[_WORKER_CONFIG_ENV_KEY] = self._config_path
+            uvicorn.run(
+                "apmoe.serving.app_factory:create_worker_app",
+                factory=True,
+                host=serving_cfg.host,
+                port=serving_cfg.port,
+                workers=workers,
+                log_level=serving_cfg.log_level,
+                **uvicorn_kwargs,
+            )
+        else:
+            # Single-worker (development) mode: pass the object directly.
+            api = create_api(self)
+            uvicorn.run(
+                api,
+                host=serving_cfg.host,
+                port=serving_cfg.port,
+                workers=1,
+                log_level=serving_cfg.log_level,
+                **uvicorn_kwargs,
+            )
 
     # ------------------------------------------------------------------
     # Read-only properties
@@ -424,6 +477,7 @@ class APMoEApp:
             "modalities": [m.name for m in self._config.apmoe.modalities],
             "aggregator": self._aggregator.get_info(),
             "serving": self._config.apmoe.serving.model_dump(),
+            "confidence_threshold": self._config.apmoe.confidence_threshold,
         }
 
     def __repr__(self) -> str:

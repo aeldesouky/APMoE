@@ -189,12 +189,29 @@ class APMoEConfig(BaseModel):
         experts: List of expert plugin definitions.
         aggregation: Aggregation strategy config.
         serving: HTTP serving config (defaults applied when absent).
+        confidence_threshold: Optional confidence gate in ``[0.0, 1.0]``.
+            When the aggregated :attr:`~apmoe.core.types.Prediction.confidence`
+            falls below this value the pipeline populates
+            ``Prediction.metadata["recommendations"]`` with a list of
+            actionable improvement hints.  Set to ``null`` (or omit) to
+            disable the recommendation engine.
     """
 
     modalities: list[ModalityConfig]
     experts: list[ExpertConfig]
     aggregation: AggregationConfig
     serving: ServingConfig = Field(default_factory=ServingConfig)
+    confidence_threshold: float | None = None
+
+    @field_validator("confidence_threshold")
+    @classmethod
+    def confidence_threshold_must_be_in_range(cls, v: float | None) -> float | None:
+        """Ensure the threshold is a probability in ``[0.0, 1.0]`` when set."""
+        if v is not None and not (0.0 <= v <= 1.0):
+            raise ValueError(
+                f"confidence_threshold must be in [0.0, 1.0], got {v}."
+            )
+        return v
 
     @model_validator(mode="after")
     def validate_expert_modalities_declared(self) -> "APMoEConfig":

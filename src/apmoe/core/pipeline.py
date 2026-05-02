@@ -156,6 +156,7 @@ class InferencePipeline:
     chains: dict[str, ModalityChain]
     expert_registry: ExpertRegistry
     aggregator: AggregatorStrategy
+    confidence_threshold: float | None = None
     on_before_process: list[OnBeforeProcess] = field(default_factory=list)
     on_after_embed: list[OnAfterEmbed] = field(default_factory=list)
     on_after_expert: list[OnAfterExpert] = field(default_factory=list)
@@ -174,6 +175,90 @@ class InferencePipeline:
         """
         for hook in hooks:
             hook(*args)
+
+    def _maybe_add_recommendations(
+        self,
+        prediction: Prediction,
+        skipped_experts: list[str],
+    ) -> None:
+        """Populate ``prediction.metadata["recommendations"]`` when confidence
+        is below :attr:`confidence_threshold`.
+
+        The list is always written (empty when confidence passes or threshold is
+        not configured), so callers can rely on the key being present.
+
+        Recommendation rules (evaluated in priority order):
+
+        1. **All experts skipped** — no modality data was usable.
+        2. **Short keystroke session** — ``features_observed_fraction < 0.5``
+           in any ``keystroke_age_expert`` output.
+        3. **Image-only, no calibrated confidence** — ``FaceAgeExpert`` ran
+           alone and returned ``confidence == -1.0``.
+        4. **Generic below-threshold guidance** — catch-all when none of the
+           above specific rules fired.
+
+        Args:
+            prediction: The ``Prediction`` to annotate in place.
+            skipped_experts: Names of experts skipped during this request.
+        """
+        recommendations: list[str] = []
+
+        threshold = self.confidence_threshold
+        below_threshold = (
+            threshold is not None
+            and prediction.confidence < threshold
+        )
+
+        # Rule 1: all experts were skipped — no modalities provided
+        all_skipped = bool(skipped_experts) and not prediction.per_expert_outputs
+        if all_skipped:
+            configured_modalities = sorted(self.chains.keys())
+            recommendations.append(
+                "No modalities were recognized. "
+                f"Provide at least one of: {', '.join(configured_modalities)}."
+            )
+
+        if below_threshold:
+            # Rule 2: keystroke session coverage too low
+            for expert_out in prediction.per_expert_outputs:
+                frac = expert_out.metadata.get("features_observed_fraction")
+                if frac is not None and float(frac) < 0.5:
+                    recommendations.append(
+                        f"Expert '{expert_out.expert_name}': keystroke session coverage is "
+                        f"{float(frac):.0%} — collect at least 50 keystrokes for reliable "
+                        f"age inference (current coverage triggers median-fill for the "
+                        f"majority of features)."
+                    )
+
+            # Rule 3: face-only prediction with no calibrated confidence
+            face_only = (
+                len(prediction.per_expert_outputs) == 1
+                and prediction.per_expert_outputs[0].confidence == -1.0
+            )
+            if face_only:
+                recommendations.append(
+                    "Image-only prediction has no calibrated confidence score "
+                    "(regression models do not produce probabilities). "
+                    "Add keystroke data for a multi-modal estimate with a "
+                    "quantified confidence."
+                )
+
+            # Rule 4: generic guidance (always included when below threshold
+            # and no more specific rule fully covers the situation)
+            if not recommendations or (not all_skipped):
+                recommendations.append(
+                    f"Aggregated confidence is {prediction.confidence:.0%}, "
+                    f"below the configured threshold of {threshold:.0%}. "
+                    "Suggestions: "
+                    "(1) supply additional modalities if available; "
+                    "(2) ensure the face image is well-lit and the face is clearly visible; "
+                    "(3) extend the keystroke session length; "
+                    "(4) consider fine-tuning expert weights on domain-specific data "
+                    "(`apmoe finetune`)."
+                )
+
+        prediction.metadata["recommendations"] = recommendations
+        prediction.metadata["confidence_threshold"] = threshold
 
     def _process_one_modality(
         self,
@@ -400,9 +485,13 @@ class InferencePipeline:
             },
         )
 
+        # Inject confidence-based recommendations (no-op when threshold is None)
+        self._maybe_add_recommendations(prediction, skipped_names)
+
         self._run_hooks(self.on_after_aggregate, prediction)
 
         return prediction
+
 
     # ------------------------------------------------------------------
     # Public execution interface

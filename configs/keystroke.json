@@ -27,6 +27,7 @@
       "workers": 1,
       "cors_origins": ["*"],
       "log_level": "info"
-    }
+    },
+    "confidence_threshold": 0.75
   }
 }

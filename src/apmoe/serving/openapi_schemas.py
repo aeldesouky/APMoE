@@ -154,14 +154,25 @@ class PredictionResponse(BaseModel):
                         "consumed_modalities": ["keystroke"],
                         "predicted_age": 32.5,
                         "confidence": 0.82,
-                        "metadata": {},
+                        "metadata": {
+                            "predicted_group": "26-35",
+                            "features_observed_fraction": 0.45,
+                        },
                     }
                 ],
                 "skipped_experts": ["face_age_expert"],
                 "metadata": {
-                    "pipeline_latency_s": 0.045,
+                    "pipeline_latency_s": 0.006,
                     "available_modalities": ["keystroke"],
                     "failed_modalities": {},
+                    "confidence_threshold": 0.85,
+                    "recommendations": [
+                        "Expert 'keystroke_age_expert': keystroke session coverage is 45%"
+                        " — collect at least 50 keystrokes for reliable age inference.",
+                        "Aggregated confidence is 82%, below the configured threshold of"
+                        " 85%. Suggestions: (1) supply additional modalities if available;"
+                        " (2) extend the keystroke session length.",
+                    ],
                 },
             }
         },
@@ -180,7 +191,11 @@ class PredictionResponse(BaseModel):
     )
     metadata: dict[str, Any] = Field(
         default_factory=dict,
-        description="Pipeline metadata (latency, available modalities, failures, etc.).",
+        description=(
+            "Pipeline metadata: latency, available modalities, failures, "
+            "confidence_threshold (float | null), and recommendations (list[str]) "
+            "when confidence falls below the configured threshold."
+        ),
     )
 
 
@@ -205,3 +220,10 @@ class InfoResponse(BaseModel):
     modalities: list[str]
     aggregator: dict[str, Any]
     serving: dict[str, Any]
+    confidence_threshold: float | None = Field(
+        default=None,
+        description=(
+            "Confidence gate in [0.0, 1.0] below which the pipeline populates "
+            "Prediction.metadata['recommendations'].  null when disabled."
+        ),
+    )
