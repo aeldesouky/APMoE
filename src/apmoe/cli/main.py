@@ -333,7 +333,7 @@ def cli() -> None:
 # ---------------------------------------------------------------------------
 
 
-@cli.command(context_settings=_CLI_CONTEXT_SETTINGS)
+@cli.command(context_settings=_CLI_CONTEXT_SETTINGS, short_help="Scaffold a new APMoE project directory.")
 @click.argument("project_name", default="my_apmoe_project", metavar="[PROJECT_NAME]")
 @click.option(
     "--builtin",
@@ -440,7 +440,7 @@ def init(project_name: str, builtin: bool) -> None:
 # ---------------------------------------------------------------------------
 
 
-@cli.command(context_settings=_CLI_CONTEXT_SETTINGS)
+@cli.command(context_settings=_CLI_CONTEXT_SETTINGS, short_help="Load pretrained models and start the API server.")
 @click.option(
     "--config",
     "-c",
@@ -539,7 +539,7 @@ def serve(
 # ---------------------------------------------------------------------------
 
 
-@cli.command(context_settings=_CLI_CONTEXT_SETTINGS)
+@cli.command(context_settings=_CLI_CONTEXT_SETTINGS, short_help="Run inference on local files.")
 @click.option(
     "--config",
     "-c",
@@ -696,7 +696,7 @@ def predict(config: str, input_path: str, output: str | None) -> None:
 # ---------------------------------------------------------------------------
 
 
-@cli.command(context_settings=_CLI_CONTEXT_SETTINGS)
+@cli.command(context_settings=_CLI_CONTEXT_SETTINGS, short_help="Validate a configuration file and verify all components.")
 @click.option(
     "--config",
     "-c",
