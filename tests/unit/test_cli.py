@@ -179,24 +179,24 @@ class TestInitCommand:
 
     def test_weights_directory_has_onnx_model(self, tmp_path: Path) -> None:
         """The keystroke ONNX model is present when package weights are available."""
-        from apmoe.cli.main import Path as _Path  # noqa: PLC0415
-        pkg_weights = _Path(__file__).parent.parent.parent / "src" / "apmoe" / "weights"
+        import apmoe
+        pkg_weights = Path(apmoe.__file__).parent / "weights"
         if not (pkg_weights / "keystroke_age_expert.onnx").exists():
             pytest.skip("Package weights not present in this environment")
         runner = CliRunner()
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "myproject"])
+            runner.invoke(cli, ["init", "myproject", "--builtin"])
             assert (Path("myproject") / "weights" / "keystroke_age_expert.onnx").is_file()
 
     def test_weights_directory_has_constants_json(self, tmp_path: Path) -> None:
         """``keystroke_constants.json`` is copied alongside the ONNX model."""
-        from apmoe.cli.main import Path as _Path  # noqa: PLC0415
-        pkg_weights = _Path(__file__).parent.parent.parent / "src" / "apmoe" / "weights"
+        import apmoe
+        pkg_weights = Path(apmoe.__file__).parent / "weights"
         if not (pkg_weights / "keystroke_constants.json").exists():
             pytest.skip("Package weights not present in this environment")
         runner = CliRunner()
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "myproject"])
+            runner.invoke(cli, ["init", "myproject", "--builtin"])
             assert (Path("myproject") / "weights" / "keystroke_constants.json").is_file()
 
     def test_creates_readme(self, tmp_path: Path) -> None:

@@ -7,11 +7,29 @@ fully-configured :class:`~fastapi.FastAPI` ASGI application.
 :meth:`~apmoe.core.app.APMoEApp.serve` calls this factory internally —
 application code should not need to call it directly unless embedding the
 framework inside an existing FastAPI / ASGI application.
+
+Multi-worker serving
+--------------------
+When ``serving.workers > 1`` uvicorn spawns multiple OS processes.  Because
+each worker is a fresh interpreter, the app object from the parent process
+cannot be shared — uvicorn requires a **string import path** together with the
+``--factory`` flag so each worker calls :func:`create_worker_app` itself.
+
+:func:`~apmoe.core.app.APMoEApp.serve` handles this automatically by:
+
+1. Writing the config path to the ``APMOE_CONFIG_PATH`` environment variable.
+2. Passing ``"apmoe.serving.app_factory:create_worker_app"`` as the app
+   argument with ``factory=True``.
+
+Each worker process then calls :func:`create_worker_app`, which reads the
+environment variable, bootstraps a private :class:`~apmoe.core.app.APMoEApp`,
+and returns a fully-configured :class:`~fastapi.FastAPI` instance.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, Request
@@ -32,6 +50,9 @@ if TYPE_CHECKING:
     from apmoe.core.app import APMoEApp
 
 logger = logging.getLogger("apmoe.serving")
+
+#: Environment variable key used to pass the config path to worker processes.
+_WORKER_CONFIG_ENV_KEY = "APMOE_CONFIG_PATH"
 
 
 def create_api(
@@ -148,3 +169,52 @@ def create_api(
     api.include_router(router)
 
     return api
+
+
+def create_worker_app() -> FastAPI:
+    """Bootstrap a :class:`~apmoe.core.app.APMoEApp` and return a FastAPI app.
+
+    This function is the **uvicorn factory entry point** for multi-worker
+    (multi-process) deployments.  Each worker process calls it independently
+    to construct its own ``APMoEApp`` — shared-memory app objects cannot be
+    forked safely across uvicorn worker processes.
+
+    The config file path is read from the ``APMOE_CONFIG_PATH`` environment
+    variable, which :meth:`~apmoe.core.app.APMoEApp.serve` writes before
+    handing control to uvicorn.
+
+    Returns:
+        A fully-configured :class:`~fastapi.FastAPI` ASGI application.
+
+    Raises:
+        :class:`~apmoe.core.exceptions.ConfigurationError`: If
+            ``APMOE_CONFIG_PATH`` is not set or the config file is invalid.
+
+    Usage (internal — called by uvicorn when ``factory=True``)::
+
+        # APMoEApp.serve() passes the equivalent of:
+        uvicorn.run(
+            "apmoe.serving.app_factory:create_worker_app",
+            factory=True,
+            host="0.0.0.0",
+            port=8000,
+            workers=4,
+        )
+    """
+    from apmoe.core.app import APMoEApp  # local import avoids circular dependency
+    from apmoe.core.exceptions import ConfigurationError
+
+    config_path = os.environ.get(_WORKER_CONFIG_ENV_KEY)
+    if not config_path:
+        raise ConfigurationError(
+            f"Multi-worker bootstrap requires the '{_WORKER_CONFIG_ENV_KEY}' "
+            f"environment variable to be set to the APMoE config file path.  "
+            f"This variable is written automatically by APMoEApp.serve().",
+            context={"env_key": _WORKER_CONFIG_ENV_KEY},
+        )
+
+    logger.info(
+        "Worker process starting — loading config from '%s'", config_path
+    )
+    apmoe_app = APMoEApp.from_config(config_path)
+    return create_api(apmoe_app)
