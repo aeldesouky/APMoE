@@ -1,87 +1,107 @@
-# Developer Experience and Error Handling
+# Developer Experience (DX) and Extensibility Guide
 
-APMoE is designed as a generic, Inversion of Control (IoC) framework. This document details how the developer experience (DX) and error handling have been optimized to make extending and debugging the framework as seamless as possible.
+APMoE is designed from the ground up as a generic, Inversion of Control (IoC) framework. This document details how the developer experience (DX), configuration management, and error handling have been optimized to make extending, deploying, and debugging the framework as seamless as possible.
 
-## 1. CLI Scaffolding and Fast Feedback
+## 1. Concrete DX Highlights
 
-**Project Initialization**
-The `apmoe init <project-name> --builtin` command gives developers an immediate, fully working project. It scaffolds:
+These are the specific, implemented DX features that differentiate APMoE's integration and development lifecycle:
+
+- **One-command, runnable project scaffold**: `apmoe init <project> --builtin` creates a ready-to-serve project with a valid `config.json`, stub extension files (`custom_expert.py`, `custom_cleaner.py`, etc.), and a `README.md`. The `--builtin` flag bundles working ONNX/Keras weights natively, making `apmoe serve -c config.json` immediately functional out-of-the-box.
+- **Below-Threshold Confidence & Active Recommendations**: The framework actively monitors inference confidence against a user-defined `confidence_threshold` in the configuration. If the score falls below this threshold, the pipeline automatically populates `Prediction.metadata["recommendations"]` with an ordered, actionable list of improvement hints (e.g., warning about low keystroke coverage, uncalibrated regression models, or suggesting additional modalities). 
+- **Pre-flight validation before runtime**: `apmoe validate --config config.json` acts as a dry-run health check. It executes Pydantic schema validation, dotted-path resolution, weight-file existence checks, and expert health checks. Configuration mistakes fail fast with highly actionable error messages before the server even binds to a port.
+- **Config overrides without editing JSON**: Serving parameters can be overridden via `APMOE_SERVING_*` environment variables (host, port, workers, CORS, rate limit), ensuring deploy-time infrastructure tweaks do not require mutating the core configuration file.
+- **API docs with concrete examples**: Swagger UI (`/docs`) and ReDoc (`/redoc`) ship automatically, pre-filled with OpenAPI schema examples for all supported modalities (keystroke triples, IKDD strings, image payloads), allowing instant inference testing without writing a client.
+- **Versioned API with safe migration paths**: Endpoints are properly versioned under `/v1/*` (`/v1/predict`, `/v1/health`, `/v1/info`). Legacy unversioned paths remain for backward compatibility but automatically return standard HTTP `Deprecation` and `Sunset` headers alongside `X-API-Version: 1` to explicitly guide client migration.
+- **Correlation IDs and structured logs**: Every HTTP request is automatically assigned an `X-Correlation-ID`. Structured JSON logs are emitted containing the method, path, status, and latency, making debugging and distributed tracing instantly accessible.
+- **Zero-boilerplate plugin registration**: Decorators like `@expert_registry.register("name")` allow new experts, processors, and strategies to be registered without manual wiring. IoC binding occurs cleanly via dotted paths in the `config.json`.
+- **Local inference without a client**: `apmoe predict --input <dir>` reads files named after modality keys directly from disk and prints formatted JSON output, enabling offline smoke tests and batch debugging.
+- **Graceful degradation built-in**: The inference pipeline is inherently fault-tolerant. If a modality is missing, malformed, or an expert fails, the pipeline safely skips it and reports the details in `skipped_experts` and `failed_modalities` within the response payload rather than crashing the system.
+- **Lifecycle observability hooks**: The `InferencePipeline` exposes hooks (`on_before_process`, `on_after_embed`, `on_after_expert`, `on_after_aggregate`) allowing integration teams to attach custom logging, metrics, or auditing without monkey-patching core code.
+- **Schema-level guardrails**: The Pydantic configuration layer enforces strict structural rules (e.g., ensuring all expert modalities are declared, unique names, valid bounds for thresholds), rejecting invalid states natively at boot.
+- **Multi-worker serving that just works**: `apmoe serve --workers N` correctly utilizes an ASGI factory app pattern, completely avoiding the broken state-sharing issues common in naive Python multi-process deployments.
+
+## 2. CLI Toolchain and Fast Feedback
+
+The APMoE CLI provides an immediate, guided path from blank slate to production serving.
+
+### Scaffolding a Project
+Running `apmoe init <project-name> --builtin` gives developers a fully working project hierarchy:
 - A `config.json` file pre-wired with valid processing strategies and models.
-- Placeholder stub files (`custom_expert.py`, `custom_cleaner.py`, etc.) demonstrating how to subclass the framework's Abstract Base Classes (ABCs).
-- A `weights/` directory populated with working ONNX and Keras models (when `--builtin` is passed).
-- A `README.md` containing next steps.
+- Placeholder stub files (`custom_expert.py`, `custom_cleaner.py`, etc.) demonstrating exactly how to subclass the framework's Abstract Base Classes (ABCs).
+- A `weights/` directory populated with working ONNX and Keras models (via the `--builtin` flag).
+- A custom `README.md` containing exact next steps for validation and serving.
 
-### Help and usage (`--help`, `-h`)
+### Discoverability (`--help`)
+Every command in the APMoE CLI exposes concise, actionable help text via `--help` or `-h`. 
+- `apmoe --help` lists top-level commands.
+- `apmoe init --help` shows scaffolding options.
 
-Every command in the APMoE CLI exposes concise, discoverable help text. The CLI group and all subcommands accept both the long `--help` and short `-h` flags (configured via `context_settings` in the CLI bootstrap). Examples to capture or run:
+### Pre-flight Configuration Validation
+To prevent deep runtime failures in production, `apmoe validate --config config.json` acts as a comprehensive pre-flight health check, verifying:
+1. Strict Pydantic schema compliance for the JSON structure.
+2. Successful Python `importlib` resolution of all classes specified via dotted paths.
+3. Existence and readability of all required weight files on disk.
+4. Execution of generic health checks (`is_loaded()`) against each initialized `ExpertPlugin`.
 
-- `apmoe --help` — lists subcommands and top-level usage.
-- `apmoe init --help` or `apmoe init -h` — shows the `init` command usage, options like `--builtin`, and the `project_name` argument.
+## 3. Error Handling Hierarchy
 
-The help text is intentionally short and actionable so developers can learn available flags (for example `--builtin`) without reading the docs. Include a screenshot of `apmoe init --help` in your DX guide to prove discoverability.
+APMoE utilizes a strongly typed, hierarchical exception system defined in `src/apmoe/core/exceptions.py`. This ensures high visibility and predictability.
 
-**Configuration Validation**
-To prevent deep runtime failures, developers can use `apmoe validate --config config.json`. This command acts as a comprehensive pre-flight health check, verifying:
-- Pydantic schema validation for the JSON structure.
-- Successful import and resolution of all Python classes specified via dotted paths.
-- Existence of all required weight files on disk.
-- Execution of the generic health checks (`get_info()`) against each `ExpertPlugin`.
+All errors inherit from `APMoEError`, allowing broad catch-all handling, subdivided into granular domains:
 
-## 2. Error Handling Hierarchy
+### Configuration and Initialization
+- `ConfigurationError`: Raised when the `config.json` structure is malformed, required fields are missing, or Pydantic cross-validation fails.
+- `RegistryError`: Raised when attempting to register duplicate plugin names or failing to load an unregistered class via dotted path.
 
-APMoE uses a strongly typed, hierarchical exception system defined in `src/apmoe/core/exceptions.py` to ensure high visibility and predictability during API or CLI execution.
+### Inference Pipeline
+- `PipelineError`: Raised when the orchestrator fails structurally (e.g., post-filtering leaves absolutely zero valid experts to execute).
+- `ModalityError`: Raised specifically for data-level issues during the preparation phase (Cleaner, Anonymizer, Embedder). Also handles raw data format validation failures.
 
-All errors inherit from `APMoEError`, allowing broad catch-all handling. This is then split into granular domains:
+### Plugin Execution
+- `ExpertError`: Thrown when an expert plugin fails to load properly (missing weights), encounters an invalid tensor shape during `predict()`, or returns a malformed `ExpertOutput`.
 
-### **Configuration and Initialization Errors**
-- `ConfigurationError`: Raised when the `config.json` structure is malformed, required fields are missing, or Pydantic validation fails.
-- `RegistryError`: Raised when attempting to register duplicate plugin names or load an unregistered class via dotted path.
-
-### **Inference Pipeline Errors**
-- `PipelineError`: Raised when the orchestrator fails (e.g., an aggregator receives identical or empty output structures, or post-filtering leaves no valid experts).
-- `ModalityError`: Raised specifically for data-level issues during the preparation phase (Cleaner, Anonymizer, Embedder). Also handles raw data validation failures.
-
-### **Plugin Validation and Execution Errors**
-- `ExpertError`: Thrown when an expert plugin fails to load properly, encounters an invalid payload shape during `predict()`, or attempts to return a malformed `ExpertOutput`.
-
-### **HTTP Serving Errors**
+### HTTP Serving
 - `ServingError`: Handles ASGI-level failures, framework bootstrapping errors within the FastAPI startup sequence, or missing middleware requirements.
 
-## 3. API Transparency and Logging
+## 4. Below-Threshold Confidence & Recommendations
 
-**Standardized Outputs**
-All successful pipeline executions guarantee an `apmoe.core.types.Prediction` dataclass serialization. This applies identically whether passing data via the `apmoe predict` CLI or the `POST /predict` HTTP endpoints. 
+The pipeline does not just execute inference; it actively helps integrators improve their input data quality.
 
-**Decorators and Extensibility**
-Registering custom processing strategies or models is incredibly low-friction. Developers only need to use module-level singletons exposed via `apmoe`. For example:
+If the final `Prediction.confidence` drops below the `confidence_threshold` defined in the active configuration, the pipeline's recommendation engine evaluates the context and appends human-readable guidance to `Prediction.metadata["recommendations"]`.
 
+**Example Scenarios Handled:**
+- **Zero experts executed**: Recommends which valid modality keys should be provided.
+- **Sparse keystroke sessions**: If the `KeystrokeAgeExpert` detects a low feature coverage fraction (relying heavily on median imputation), the API explicitly requests longer sessions (e.g., ">50 keystrokes").
+- **Uncalibrated modalities**: Warns when only a regression model (like Face Age) executes, explaining that regression yields no probabilistic confidence and suggesting the addition of keystroke data.
+
+This ensures that "bad" predictions are accompanied by exact, programmatic instructions on how to achieve "good" predictions.
+
+## 5. Complete Extensibility Strategy (Inversion of Control)
+
+APMoE's true power lies in its dependency injection architecture. Instead of hard-coding how specific modalities are processed, APMoE uses the JSON configuration to bind developer implementations to framework interfaces:
+
+1. **ModalityProcessors**: Convert raw payload bytes into strictly typed `ModalityData` (e.g., parsing IKDD strings or decoding base64 JPEGs).
+2. **Pipelines**: Each modality defines a chained processing sequence:
+   * **Cleaners**: Ensure data validity (resizing images, standardizing keystroke timings).
+   * **Anonymizers**: Mutate the payload to preserve privacy *before* inference (e.g., blurring faces).
+   * **Embedders (Optional)**: Pre-compute vector embeddings for downstream models.
+3. **Experts (MoE)**: Isolated inference modules (`ExpertPlugin`). The developer specifies required modalities (e.g., `["keystroke"]`), and the framework automatically isolates the data and invokes each expert concurrently.
+4. **Aggregators**: Combine multiple `ExpertOutput` objects into a single final `Prediction`. The built-in `WeightedAverageAggregator` natively handles confidence/value arithmetic, but custom heuristic combiners can be easily plugged in.
+
+Developers only need to use module-level singletons to inject their logic:
 ```python
 from apmoe import expert_registry, ExpertPlugin
 
 @expert_registry.register("my_domain_expert")
 class DomainExpert(ExpertPlugin):
-    ...
+    # Implementation here
 ```
 
-**Developer-centric Messaging**
-Failed dependency injections or validation checks log highly readable tracebacks pointing specifically to the component key and expected path formatting. The `message` and `context` attributes on all `APMoEError` subclasses are directly passed back to the user or API consumer, keeping abstraction boundaries strong but error states clear.
+## 6. Serving Middleware and Security Out-of-the-Box
 
-## 4. Complete Extensibility Strategy (Inversion of Control)
+The `apmoe serve` command generates a robust FastAPI ASGI application wrapped in multiple layers of production-ready middleware:
 
-APMoE's true power lies in its dependency injection architecture. Rather than hard-coding how "images" or "keystrokes" are processed, APMoE uses configuration files to bind implementations to interfaces:
-
-1. **ModalityProcessors**: Convert raw bytes (e.g., from an HTTP upload or disk) into typed `ModalityData`. E.g., `ImageProcessor` handles JPEG decoding into arrays.
-2. **Pipelines**: Each modality has a chained processing pipeline.
-   * **Cleaners**: Ensure data validity (e.g., Image Cleaner resizing or Keystroke filtering).
-   * **Anonymizers**: Mutate the payload to preserve privacy before inference (e.g., applying pixelation/blur to images).
-   * **Embedders (Optional)**: Can pre-compute vector embeddings if multiple experts require the same expensive feature extraction.
-3. **Experts (MoE)**: Isolated inference modules (`ExpertPlugin`). The developer specifies required modalities (e.g., `["image"]`, `["keystroke", "audio"]`), and the framework automatically subsets the data and invokes each expert concurrently. Built-in experts handle Keras (`FaceAgeExpert`) and ONNX (`KeystrokeAgeExpert`) weights natively.
-4. **Aggregators**: Combine multiple `ExpertOutput` structures into a final `Prediction`. The `WeightedAverageAggregator` natively handles simple confidence/value arithmetic, but custom heuristic combiners can be plugged in immediately.
-
-## 5. Serving Middleware and Security
-
-The `apmoe serve` endpoint automatically generates a robust FastAPI environment wrapped in multiple security layers:
-- **CORS Middleware**: Native, configurable Cross-Origin settings to allow web dashboard connections immediately.
-- **Request Logging**: Built-in correlation ID tracking for every request sent into the framework.
-- **Rate Limiting**: Capable of protecting the heavy AI inference endpoints from DDOS or exhaustion out-of-the-box.
-- **AuthPlugin Hook**: Complete abstraction for authentication. Developers can pass an `AuthPlugin` instance to `create_api()`, automatically gating endpoints without touching FastAPIs internals.
+- **CORS Middleware**: Native, configurable Cross-Origin settings to allow immediate web dashboard integrations.
+- **Request Logging**: Built-in correlation ID tracking (`X-Correlation-ID`) tied to structured logs for every inbound request.
+- **Rate Limiting**: In-memory sliding window rate limits capable of protecting heavy AI inference endpoints from exhaustion.
+- **AuthPlugin Hook**: A clean, abstract interface for authentication. Developers can pass an `AuthPlugin` instance directly to `create_api()`, automatically gating endpoints without needing to manipulate FastAPI's routing directly.
