@@ -11,6 +11,15 @@ The `apmoe init <project-name> --builtin` command gives developers an immediate,
 - A `weights/` directory populated with working ONNX and Keras models (when `--builtin` is passed).
 - A `README.md` containing next steps.
 
+### Help and usage (`--help`, `-h`)
+
+Every command in the APMoE CLI exposes concise, discoverable help text. The CLI group and all subcommands accept both the long `--help` and short `-h` flags (configured via `context_settings` in the CLI bootstrap). Examples to capture or run:
+
+- `apmoe --help` — lists subcommands and top-level usage.
+- `apmoe init --help` or `apmoe init -h` — shows the `init` command usage, options like `--builtin`, and the `project_name` argument.
+
+The help text is intentionally short and actionable so developers can learn available flags (for example `--builtin`) without reading the docs. Include a screenshot of `apmoe init --help` in your DX guide to prove discoverability.
+
 **Configuration Validation**
 To prevent deep runtime failures, developers can use `apmoe validate --config config.json`. This command acts as a comprehensive pre-flight health check, verifying:
 - Pydantic schema validation for the JSON structure.
