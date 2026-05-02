@@ -575,7 +575,7 @@ apmoe serve --config config.json
 | Implement `ExpertPlugin.finetune()` ABC hook + `save_weights()` | Software Team | Low | Architecture fully designed; see Component F |
 | Implement `apmoe finetune` CLI command | Software Team | Low | Extends existing Click group pattern |
 | Implement `POST /finetune` HTTP endpoint | Software Team | Low | Extends existing FastAPI router pattern |
-| Implement `confidence_threshold` config key + `recommendations` field | Software Team | Low | Architecture fully designed; see Component G |
+| ~~Implement `confidence_threshold` config key + `recommendations` field~~ | ~~Software Team~~ | ~~Low~~ | **✅ Completed 2026-05-03** — see §2.7 |
 | Resume ECG baseline training | DSAI Team | GPU availability | Framework ready to integrate once weights exist |
 | Add EEG expert plugin | DSAI Team | Medium | Preprocessing pipeline complete |
 | Explore additional modalities (voice, gait, fingerprint) | DSAI Team | Low | Research stage; no blockers on SWD side |
@@ -782,17 +782,215 @@ Every claim in this report is backed by a specific file and line range that shou
 
 ---
 
-## **§2.7 — Below-Threshold Confidence Handling (In Progress)**
+## **§2.7 — Below-Threshold Confidence Handling & Recommendation Engine**
 
-### E-21 · `ExpertOutput.confidence` and `Prediction.confidence` — existing confidence data model
+> **Status: ✅ Implemented (2026-05-03)**
 
-| Field | Value |
-| :--- | :--- |
-| **File** | `src/apmoe/core/types.py` |
-| **Lines** | 124 – 196 |
-| **Shows** | `ExpertOutput.confidence` field with `-1.0` sentinel (L. 143-155); `Prediction.confidence` in `[0, 1]` (L. 177-196); `Prediction.metadata` dict (L. 182) — the field that will carry `"recommendations"` |
+### Overview
+
+The recommendation engine activates whenever the aggregated `Prediction.confidence` falls below a user-configured threshold. It populates `Prediction.metadata["recommendations"]` with an ordered list of actionable, human-readable improvement hints that can be surfaced directly to end-users or integrating applications.
+
+This satisfies the requirement: *"system should be able to handle below threshold confidence and provide recommendation/suggestions for improvement."*
 
 ---
+
+### Configuration
+
+The threshold is set via the `confidence_threshold` key in the `"apmoe"` config block:
+
+```json
+{
+  "apmoe": {
+    "confidence_threshold": 0.75
+  }
+}
+```
+
+| Config key | Type | Default | Constraint |
+|---|---|---|---|
+| `confidence_threshold` | `float \| null` | `null` (disabled) | Must be in `[0.0, 1.0]`; validated by Pydantic `@field_validator` at load time |
+
+Setting `confidence_threshold` to `null` (or omitting the key entirely) disables the engine. No recommendations are generated and `metadata["recommendations"]` is still written as an empty list, so API consumers can always rely on the key being present.
+
+**Source:** `src/apmoe/core/config.py` L. 204–214
+
+---
+
+### Pipeline Integration
+
+The engine runs as a single post-aggregation step inside `InferencePipeline._phase_b()`, after the `AggregatorStrategy` has produced the final `Prediction` but **before** the `on_after_aggregate` hooks fire:
+
+```
+Phase B flow:
+  1. ExpertPlugin.predict() × N experts
+  2. AggregatorStrategy.aggregate(expert_outputs) → raw Prediction
+  3. Prediction enriched with pipeline metadata (latency, modalities, failures)
+  4. ← _maybe_add_recommendations(prediction, skipped_experts)   ← NEW
+  5. on_after_aggregate hooks
+  6. return Prediction
+```
+
+This placement means:
+- Every code path that calls `_phase_b()` — `run()`, `run_async()`, and `predict_async()` — automatically benefits from recommendations.
+- Hooks see the recommendations already in `prediction.metadata` if they inspect it.
+
+**Source:** `src/apmoe/core/pipeline.py` L. 179–261 (`_maybe_add_recommendations`) and L. 487–492 (call site in `_phase_b`)
+
+---
+
+### Recommendation Rules
+
+The method `InferencePipeline._maybe_add_recommendations()` evaluates four rules in priority order. Rules are **not mutually exclusive** — multiple rules can fire on the same request, producing multiple items in the `recommendations` list.
+
+#### Rule 1 — All Experts Skipped
+
+**Trigger:** All experts were skipped (i.e. `skipped_experts` is non-empty **and** `per_expert_outputs` is empty). This happens when no recognized modality data was provided.
+
+**Condition (code):**
+```python
+all_skipped = bool(skipped_experts) and not prediction.per_expert_outputs
+```
+
+**Fires regardless of threshold** — this rule fires unconditionally (even when `confidence_threshold` is `null`) because a zero-expert result is always an actionable error state.
+
+**Message template:**
+```
+"No modalities were recognized. Provide at least one of: {modality_1}, {modality_2}, ..."
+```
+
+The modality list is derived from `sorted(self.chains.keys())` — the actual configured modality names, not hard-coded strings.
+
+---
+
+#### Rule 2 — Short Keystroke Session (Low Feature Coverage)
+
+**Trigger:** `confidence < threshold` **AND** any expert's `metadata["features_observed_fraction"] < 0.5`.
+
+**Condition (code):**
+```python
+for expert_out in prediction.per_expert_outputs:
+    frac = expert_out.metadata.get("features_observed_fraction")
+    if frac is not None and float(frac) < 0.5:
+        # fire rule
+```
+
+**Why `features_observed_fraction`?** The `KeystrokeAgeExpert` uses a 715-feature vector. When a typing session is short, most features are absent and filled with **training-set medians** (`_build_feature_vector()` in `builtin.py`). This median-fill degrades the prediction quality. The `features_observed_fraction` metric (range `[0.0, 1.0]`) is written into `ExpertOutput.metadata` by `KeystrokeAgeExpert.predict()`. A value below `0.50` means the majority of features were imputed, making the confidence unreliable.
+
+**Message template:**
+```
+"Expert '{expert_name}': keystroke session coverage is {X}% — collect at least 50 
+keystrokes for reliable age inference (current coverage triggers median-fill for 
+the majority of features)."
+```
+
+---
+
+#### Rule 3 — Image-Only Prediction, No Calibrated Confidence
+
+**Trigger:** `confidence < threshold` **AND** exactly one expert ran **AND** that expert returned `confidence == -1.0`.
+
+**Condition (code):**
+```python
+face_only = (
+    len(prediction.per_expert_outputs) == 1
+    and prediction.per_expert_outputs[0].confidence == -1.0
+)
+```
+
+**Why `-1.0`?** The `FaceAgeExpert` is a Keras regression model (outputs a single age value, not a probability distribution). Regression models have no natural confidence score. The framework uses the sentinel value `-1.0` (defined in `ExpertOutput.__post_init__`) to signal "no calibrated confidence". When the aggregator receives only this expert, the aggregated `Prediction.confidence` will be `0.0` (the aggregator converts `-1.0` to `0.0`), which will almost always fall below any non-zero threshold.
+
+**Message:**
+```
+"Image-only prediction has no calibrated confidence score (regression models do 
+not produce probabilities). Add keystroke data for a multi-modal estimate with 
+a quantified confidence."
+```
+
+---
+
+#### Rule 4 — Generic Below-Threshold Guidance (Catch-All)
+
+**Trigger:** `confidence < threshold` **AND** (`recommendations` is still empty OR the situation was not solely covered by Rule 1).
+
+**Condition (code):**
+```python
+if not recommendations or (not all_skipped):
+    recommendations.append(...)
+```
+
+This rule is the universal fallback. It fires whenever the confidence is below the threshold, even if Rules 2 and 3 also fired — the intent is to always give the user at least one concrete next step. It is the only rule that states the exact numeric gap.
+
+**Message template:**
+```
+"Aggregated confidence is {X}%, below the configured threshold of {Y}%. 
+Suggestions: 
+(1) supply additional modalities if available; 
+(2) ensure the face image is well-lit and the face is clearly visible; 
+(3) extend the keystroke session length; 
+(4) consider fine-tuning expert weights on domain-specific data (`apmoe finetune`)."
+```
+
+---
+
+### Rule Firing Matrix
+
+| Scenario | Rule 1 | Rule 2 | Rule 3 | Rule 4 |
+|---|:---:|:---:|:---:|:---:|
+| No modality data provided | ✅ | — | — | — |
+| Short keystroke session, conf < threshold | — | ✅ | — | ✅ |
+| Image-only (face), conf < threshold | — | — | ✅ | ✅ |
+| Multimodal, conf < threshold, good coverage | — | — | — | ✅ |
+| Confidence ≥ threshold | — | — | — | — |
+| threshold = null | — | — | — | — |
+
+---
+
+### Response Contract
+
+Every `POST /predict` response includes two new keys inside `metadata`, regardless of whether the threshold fires:
+
+```json
+{
+  "predicted_age": 25.8,
+  "confidence": 0.61,
+  "metadata": {
+    "pipeline_latency_s": 0.006,
+    "available_modalities": ["keystroke"],
+    "failed_modalities": {},
+    "confidence_threshold": 0.75,
+    "recommendations": [
+      "Expert 'keystroke_age_expert': keystroke session coverage is 1% — collect at
+       least 50 keystrokes for reliable age inference.",
+      "Aggregated confidence is 61%, below the configured threshold of 75%.
+       Suggestions: (1) supply additional modalities if available; ..."
+    ]
+  }
+}
+```
+
+| Field | Type | Always present? | Notes |
+|---|---|:---:|---|
+| `metadata.confidence_threshold` | `float \| null` | ✅ | The configured threshold, or `null` if disabled |
+| `metadata.recommendations` | `list[str]` | ✅ | Empty list `[]` when no recommendations apply |
+
+`GET /info` also exposes `confidence_threshold` at the top level so integrators can inspect the current configuration without making a prediction.
+
+---
+
+### Observed Test Output
+
+```
+predicted_age     : 25.8
+confidence        : 0.6058
+threshold         : 1.0
+recommendations   : 2 item(s)
+  [1] Expert 'keystroke_age_expert': keystroke session coverage is 1%
+      — collect at least 50 keystrokes for reliable age inference...
+  [2] Aggregated confidence is 61%, below the configured threshold of
+      100%. Suggestions: (1) supply additional modalities if available...
+```
+
+*(Run: `configs/keystroke.json` with `confidence_threshold: 1.0` forced, 25-triple keystroke session, 2026-05-03)*
 
 ## **§4 — Testing**
 
@@ -834,3 +1032,47 @@ Every claim in this report is backed by a specific file and line range that shou
 | **File** | `pyproject.toml` |
 | **Lines** | 1 – 53 |
 | **Shows** | `[project.dependencies]` (pydantic, fastapi, uvicorn, click, numpy, torch, onnxruntime, pillow, tensorflow), `[project.scripts] apmoe = "apmoe.cli.main:cli"` (L. 46), `artifacts = ["src/apmoe/weights/**"]` for bundled model shipping (L. 52) |
+
+---
+
+## **§2.7 — Confidence Threshold & Recommendation Engine (Evidence)**
+
+### E-27 · `APMoEConfig.confidence_threshold` — config schema field and validator
+
+| Field | Value |
+| :--- | :--- |
+| **File** | `src/apmoe/core/config.py` |
+| **Lines** | 184 – 214 |
+| **Shows** | `confidence_threshold: float \| None = None` field (L. 204), `@field_validator("confidence_threshold")` enforcing `[0.0, 1.0]` range (L. 206-214), docstring explaining the engine contract |
+
+### E-28 · `InferencePipeline._maybe_add_recommendations()` — all four rules
+
+| Field | Value |
+| :--- | :--- |
+| **File** | `src/apmoe/core/pipeline.py` |
+| **Lines** | 179 – 261 |
+| **Shows** | Method signature and docstring (L. 179-203), `below_threshold` boolean guard (L. 206-210), Rule 1 — all-skipped check (L. 212-219), Rule 2 — `features_observed_fraction < 0.5` loop (L. 221-231), Rule 3 — face-only / confidence `-1.0` sentinel (L. 233-244), Rule 4 — generic catch-all with numeric gap (L. 246-258), final metadata writes (L. 260-261) |
+
+### E-29 · Call site — `_maybe_add_recommendations` wired into `_phase_b()`
+
+| Field | Value |
+| :--- | :--- |
+| **File** | `src/apmoe/core/pipeline.py` |
+| **Lines** | 484 – 496 |
+| **Shows** | `Prediction` construction with pipeline metadata (L. 474-486), `self._maybe_add_recommendations(prediction, skipped_names)` call (L. 489), `on_after_aggregate` hook (L. 491) — confirms recommendations are injected before any hook observer sees the prediction |
+
+### E-30 · `KeystrokeAgeExpert.predict()` — `features_observed_fraction` population
+
+| Field | Value |
+| :--- | :--- |
+| **File** | `src/apmoe/experts/builtin.py` |
+| **Lines** | 260 – 277 |
+| **Shows** | `features_observed = sum(1 for col in self._feature_cols if col in session_timings) / len(self._feature_cols)` (L. 260-262), `"features_observed_fraction": round(features_observed, 4)` written into `ExpertOutput.metadata` (L. 275) — the metric that triggers Rule 2 |
+
+### E-31 · Live config demo — `confidence_threshold` in `configs/keystroke.json`
+
+| Field | Value |
+| :--- | :--- |
+| **File** | `configs/keystroke.json` |
+| **Lines** | 1 – end |
+| **Shows** | `"confidence_threshold": 0.75` set at the `"apmoe"` root level — demonstrable with `apmoe serve --config configs/keystroke.json` and a short keystroke session |

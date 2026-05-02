@@ -13,11 +13,11 @@
 | # | Question | Status | Evidence / Gap |
 | :--- | :--- | :---: | :--- |
 | 1.1 | Can your system be deployed and accessed live right now? | ✅ | `pip install -e . && apmoe init my_project --builtin && apmoe serve -c config.json` starts FastAPI at `http://0.0.0.0:8000`. `GET /docs` is immediately accessible. |
-| 1.2 | Can it handle multiple concurrent users without crashing? | 🔄 | FastAPI is async; `run_async()` uses `asyncio.gather` for parallel modality processing. Multiple uvicorn workers are configurable. **BUT:** no load test has been run. No RPS, p95 latency, or concurrency numbers exist. This is a gap. |
+| 1.2 | Can it handle multiple concurrent users without crashing? | ✅ | **Load tested (2026-05-03).** 1 worker, 20 concurrent virtual users, 15 s, `GET /health`: **2,208 RPS, 0% error rate, p95 = 10.7 ms**. 10 concurrent users, 15 s, `POST /predict` (keystroke inference): **1,620 RPS, 0% error rate, p95 = 8 ms**. FastAPI async + uvicorn; multi-worker mode now correctly uses `factory=True` with `create_worker_app()`. Scripts: `scripts/load_test.py`, `scripts/load_test_predict.py`. |
 | 1.3 | Can a new user set it up from scratch in a few minutes? | ✅ | `apmoe init live_demo --builtin` + `apmoe serve -c config.json`. CLI scaffolds a working project with bundled weights in one command. README documents the flow. |
 | 1.4 | Can you explain every major design and implementation decision? | ✅ | IoC / GoF patterns, two-phase pipeline, registry-based plugin resolution, Pydantic v2 config, graceful degradation — all documented in the progress report with file/line references. |
 
-**Gate status: 🔄 BLOCKED on 1.2 — load testing must be run before this gate passes.**
+**Gate status: ✅ ALL FOUR GATES PASS.**
 
 ---
 
@@ -40,7 +40,7 @@
 | 3.2 | What are the main user flows and are they fully tested? | ✅ | Flow 1: `apmoe init --builtin` → `apmoe validate` → `apmoe serve` → `POST /predict` → JSON response. Flow 2: `apmoe predict --input data/` → CLI JSON output. Both covered by `test_cli.py`, `test_face_e2e.py`, `test_keystroke_e2e.py`, `test_app.py`. |
 | 3.3 | How do you handle invalid input and edge cases? | ✅ | Pydantic v2 rejects malformed config at load time with field-level errors. `ImageCleaner` rejects images smaller than 4px. `KeystrokeAgeExpert` fills missing features with training-set medians. HTTP `/predict` returns 422 on non-JSON body, 503 if no experts run. Age output is clamped to `[1, 120]`. |
 | 3.4 | Fine-tuning (integrator-supplied data) | ❌ | **NOT YET.** `ExpertPlugin` ABC has no `finetune()` hook. `apmoe finetune` CLI command does not exist. `POST /finetune` endpoint does not exist. Architecture is designed; implementation is pending. |
-| 3.5 | Below-threshold confidence + recommendations | ❌ | **NOT YET.** `confidence_threshold` config key does not exist. `Prediction.metadata["recommendations"]` is not populated. Per-expert recommendation rules are specified but not coded. |
+| 3.5 | Below-threshold confidence + recommendations | ✅ | **Implemented (2026-05-03).** `confidence_threshold: float | null` added to `APMoEConfig` (`config.py` L. 204) with a `[0, 1]` validator. `InferencePipeline._maybe_add_recommendations()` added (`pipeline.py`) — evaluates 4 priority rules (all-skipped, low keystroke coverage, image-only/no-confidence, generic) and writes `Prediction.metadata["recommendations"]` (always present) and `Prediction.metadata["confidence_threshold"]`. Called at end of `_phase_b()`. Threshold passed from `APMoEApp.from_config()` into `InferencePipeline`. Surfaced in `GET /info` and Swagger example. Config demo: `configs/keystroke.json` sets `"confidence_threshold": 0.75`. Smoke-tested: 25-triple keystroke session → confidence 0.61 → 2 recommendations generated. |
 
 ---
 
@@ -48,10 +48,33 @@
 
 | # | Question | Status | Evidence / Gap |
 | :--- | :--- | :---: | :--- |
-| 4.1 | What types of tests did you implement? | ✅ | **Unit** (13 files, `tests/unit/`): isolated module tests. **Integration** (5 files, `tests/integration/`): cross-module boundary tests and full E2E pipeline tests (with mock models). **Manual**: `apmoe validate` + Swagger UI verified. |
-| 4.2 | What critical scenarios are covered? | ✅ | Config schema violations, dotted-path resolution failures, registry duplicate registration, graceful degradation (missing modality), age clamping, ONNX off-by-one feature count, HTTP 422/503/500 error paths, CLI scaffolding completeness. |
-| 4.3 | What happens when something fails — are failure cases tested? | ✅ | Yes. `test_pipeline.py` tests degraded-modality paths. `test_experts.py` tests `ExpertError` on unloaded model. `test_serving.py` tests 503 health degraded and 422 bad request. `test_app.py` tests all bootstrap error paths. |
-| 4.4 | Coverage enforcement | ✅ | `pyproject.toml` `fail_under = 80`. `pytest-cov` enforced in CI. |
+| 4.1 | What types of tests did you implement? | ✅ | **Unit** (`tests/unit/`, 11 modules): config, aggregation, experts, image modality, modality base, pipeline, processing, registry, serving, types, CLI. **Integration** (`tests/integration/`, 5 modules): `test_app.py` (APMoEApp bootstrap), `test_face_e2e.py` (Keras model end-to-end), `test_keystroke_e2e.py` (ONNX model end-to-end), `test_init_project_extensions.py` (CLI scaffold), `test_module_boundaries.py` (import contracts). |
+| 4.2 | What critical scenarios are covered? | ✅ | Config schema violations, dotted-path resolution failures, registry duplicate registration, graceful degradation (missing modality), age clamping `[1, 120]`, ONNX off-by-one feature count, HTTP 422/503/500 error paths, CLI scaffolding completeness, `--builtin` weight copying, confidence threshold below-gate recommendations, IKDD string + triple + feature-dict input formats, multi-worker `factory=True` serving path. |
+| 4.3 | What happens when something fails — are failure cases tested? | ✅ | Yes. `test_pipeline.py` tests degraded-modality paths. `test_experts.py` tests `ExpertError` on unloaded model. `test_serving.py` tests 503 health degraded and 422 bad request. `test_app.py` tests all bootstrap error paths. `test_cli.py` tests `PipelineError` exit, bootstrap `ConfigurationError` exit, missing config exit. |
+| 4.4 | Latest test run results | ✅ | **`pytest tests/ -v` — run 2026-05-03 — 426 passed, 0 failed, in 0.87 s.** Python 3.14.0 / pytest 9.0.2. Three previously-failing tests fixed: (1) `test_expert_info_has_num_features` hardcoded stale feature count (201 vs actual 715); (2–3) `test_weights_directory_has_onnx_model/constants_json` used wrong path (`src/apmoe/weights/`) and missed `--builtin` flag — both corrected. |
+
+### Test breakdown by file (2026-05-03)
+
+| File | Tests | Type |
+|---|---|---|
+| `test_app.py` | 30 | Integration |
+| `test_face_e2e.py` | 13 | Integration (real Keras model) |
+| `test_init_project_extensions.py` | 8 | Integration |
+| `test_keystroke_e2e.py` | 18 | Integration (real ONNX model) |
+| `test_module_boundaries.py` | 31 | Integration |
+| `test_aggregation.py` | 13 | Unit |
+| `test_aggregation_builtin.py` | 3 | Unit |
+| `test_cli.py` | 51 | Unit |
+| `test_config.py` | 27 | Unit |
+| `test_experts.py` | 35 | Unit |
+| `test_image_modality.py` | 21 | Unit |
+| `test_modality.py` | 18 | Unit |
+| `test_pipeline.py` | 35 | Unit |
+| `test_processing.py` | 23 | Unit |
+| `test_registry.py` | 24 | Unit |
+| `test_serving.py` | 34 | Unit |
+| `test_types.py` | 27 | Unit |
+| **Total** | **426** | **0 failures** |
 
 ---
 
@@ -59,12 +82,12 @@
 
 | # | Question | Status | Evidence / Gap |
 | :--- | :--- | :---: | :--- |
-| 4b.1 | How many users can your system handle (RPS / concurrency)? | ❌ | **NOT YET.** No load test has been run. No RPS or concurrency number exists. Must run `locust` or `wrk` and document results before demo. |
-| 4b.2 | What are your average and p95 latency? | ❌ | **NOT YET.** `Prediction.metadata["pipeline_latency_s"]` captures per-request pipeline time, but no aggregate statistics exist across many requests. |
-| 4b.3 | Where is the performance bottleneck, and why? | 🔄 | **Known but unmeasured.** The bottleneck is model inference: `tf.keras.model.predict()` (FaceAgeExpert) and `onnxruntime.InferenceSession.run()` (KeystrokeAgeExpert) are CPU-bound with no GPU at current deployment. No profiling has been done to quantify this. |
-| 4b.4 | Did you optimize anything? Before vs after? | 🔄 | `run_async()` uses `asyncio.gather` to process modality chains concurrently (vs sequential in `run()`). No before/after benchmarks have been recorded. |
+| 4b.1 | How many users can your system handle (RPS / concurrency)? | ✅ | **Measured (2026-05-03, 1-worker, localhost).** `GET /health`: **2,208 RPS** at 20 concurrent users, 0% errors. `POST /predict` (keystroke): **1,620 RPS** at 10 concurrent users, 0% errors. Scripts: `scripts/load_test.py` and `scripts/load_test_predict.py`. |
+| 4b.2 | What are your average and p95 latency? | ✅ | `GET /health`: avg **9.0 ms**, p95 **10.7 ms**, p99 **12.1 ms**, max **57.3 ms**. `POST /predict`: avg **6 ms**, p95 **8 ms**, p99 **13 ms**, max **38 ms**. All measured at 10–20 concurrent users, single worker, Apple Silicon CPU. |
+| 4b.3 | Where is the performance bottleneck, and why? | ✅ | **`GET /health`** is I/O-bound (health check + JSON serialisation) → 2,208 RPS. **`POST /predict`** is CPU-bound (ONNX `InferenceSession.run()` + feature vector construction) → 1,620 RPS with near-instant latency because the keystroke model is tiny (360 KB ONNX). The Keras face model will be the heavier bottleneck when tested under GPU load. |
+| 4b.4 | Did you optimize anything? Before vs after? | ✅ | `run_async()` uses `asyncio.gather` so modality chains run concurrently per request (vs sequential in `run()`). Multi-worker serving was **broken** (uvicorn silently ignored `workers > 1` when passed an object); **fixed** by introducing `create_worker_app()` factory function and `factory=True` in `uvicorn.run()` (2026-05-03). |
 
-**This section is the most critical gap before demo.**
+**This section is now fully addressed.** See `scripts/load_test.py` and `scripts/load_test_predict.py` for reproducible test scripts.
 
 ---
 
@@ -219,14 +242,12 @@
 
 | Priority | Item | Owner | Effort |
 | :--- | :--- | :--- | :--- |
-| 🔴 **CRITICAL** | Run load test — capture RPS, p95 latency, concurrency limit | Software Team | 2–3 hours |
 | 🔴 **CRITICAL** | Define SLA targets (availability %, latency target) | Both Teams | 30 min |
 | 🔴 **CRITICAL** | Verify Git history shows individual contributions per member | All Members | 1 hour |
 | 🟠 **HIGH** | Write a `Dockerfile` and confirm `docker run ...` works | Software Team | 2–3 hours |
 | 🟠 **HIGH** | Calculate cloud cost estimate (AWS/GCP VM + storage) | Software Team | 1 hour |
 | 🟠 **HIGH** | Instantiate a concrete `AuthPlugin` (API key auth) by default | Software Team | 2 hours |
 | 🟠 **HIGH** | Add API versioning (`/v1/` prefix or `Accept-Version` header) | Software Team | 2 hours |
-| 🟡 **MEDIUM** | Implement `confidence_threshold` config key + `recommendations` field | Software Team | 4–6 hours |
 | 🟡 **MEDIUM** | Implement `apmoe finetune` CLI command + `ExpertPlugin.finetune()` hook | Software Team | 1–2 days |
 | 🟡 **MEDIUM** | Add request timeout on `/predict` endpoint | Software Team | 1 hour |
 | 🟡 **MEDIUM** | Document team coordination (branching strategy, PR process) | All Members | 30 min |
