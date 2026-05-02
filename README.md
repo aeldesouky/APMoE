@@ -29,13 +29,64 @@ Datasets are **not included** in this repository due to licensing restrictions b
 - IKDD Keystroke Dynamics Dataset: https://github.com/MachineLearningVisionRG/IKDD.git
 - TUH EEG Corpus: https://isip.piconepress.com/projects/nedc/html/tuh_eeg/
 
-## Installation
+## Installation (From Source)
 
-Instructions for local setup, dependencies, and environment configuration go here. Typical requirements include Python 3.x, TensorFlow/PyTorch, Flask/Docker, and related libraries.
+APMoE requires **Python 3.11+**. Complete environment isolation using Docker is currently in progress. In the meantime, you can easily run the system locally from source.
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/your-org/APMoE.git
+   cd APMoE
+   ```
+
+2. **Create and activate a virtual environment**:
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
+
+3. **Install the package in editable mode**:
+   ```bash
+   pip install -e .
+   ```
+   *This automatically installs all required dependencies (FastAPI, ONNX Runtime, Keras, etc.) specified in `pyproject.toml`.*
+
+4. **Verify the installation**:
+   ```bash
+   apmoe --help
+   ```
 
 ## Usage
 
-Instructions for training models, running predictions, and deploying the verification service.
+APMoE is designed to be frictionless out-of-the-box. You do not need to manually configure models to run a smoke test.
+
+### 1. Scaffolding a Local Project
+Create a runnable configuration by initializing a project with bundled weights:
+```bash
+apmoe init my_app --builtin
+cd my_app
+```
+*(This generates a `config.json` and copies working ONNX/Keras models into a `weights/` directory).*
+
+### 2. Validating the Configuration
+Before starting the server, ensure your configuration and weights are valid:
+```bash
+apmoe validate --config config.json
+```
+
+### 3. Serving the API
+Start the high-performance ASGI inference server:
+```bash
+apmoe serve --config config.json --workers 1
+```
+The server will bind to `127.0.0.1:8000`. You can interact with the live Swagger UI immediately at [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs).
+
+### 4. Running the Test Suite (Development)
+If you are developing or contributing to APMoE, ensure you run the comprehensive test suite:
+```bash
+pip install -e ".[test]"
+pytest tests/ -v
+```
 
 ### API versioning
 
