@@ -1,0 +1,38 @@
+{
+  "apmoe": {
+    "modalities": [
+      {
+        "name": "image",
+        "processor": "apmoe.modality.builtin.image.ImageProcessor",
+        "pipeline": {
+          "cleaner":    "apmoe.processing.llm.Base64ImageCleaner",
+          "anonymizer": "apmoe.processing.llm.PassthroughImageAnonymizer"
+        }
+      }
+    ],
+    "experts": [
+      {
+        "name":       "llm_face_age_expert",
+        "class":      "apmoe.experts.remote.RemoteExpert",
+        "modalities": ["image"],
+        "endpoint":   "$LLM_ENDPOINT",
+        "endpoint_headers": { "Content-Type": "application/json" },
+        "endpoint_timeout": 60.0,
+        "request_template": {
+          "model":         "$LLM_MODEL",
+          "system_prompt": "$LLM_SYSTEM_PROMPT",
+          "input":         "{{modalities.image}}"
+        }
+      }
+    ],
+    "aggregation": {
+      "strategy": "apmoe.aggregation.builtin.WeightedAverageAggregator"
+    },
+    "serving": {
+      "host":    "0.0.0.0",
+      "port":    8000,
+      "workers": 1,
+      "log_level": "info"
+    }
+  }
+}

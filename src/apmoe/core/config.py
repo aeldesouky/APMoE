@@ -92,25 +92,76 @@ class ModalityConfig(BaseModel):
 class ExpertConfig(BaseModel):
     """Configuration for a single expert plugin.
 
+    Experts can run inference either **locally** (loading a weight file from
+    disk) or **remotely** (calling an HTTP endpoint).  Exactly one of
+    ``weights`` or ``endpoint`` must be provided.
+
     Attributes:
         name: Unique identifier for this expert instance (e.g.
             ``"face_age_expert"``).
         class_path: Dotted import path or registered name of the
             :class:`~apmoe.experts.base.ExpertPlugin` implementation.
-            Declared as ``"class"`` in JSON (mapped via ``alias``).
+            Declared as ``"class"`` in JSON (mapped via ``alias``).  Use
+            ``"apmoe.experts.remote.RemoteExpert"`` for remote experts.
         weights: Filesystem path to the pretrained weight file (``.pt``,
-            ``.onnx``, etc.).
+            ``.onnx``, etc.).  Mutually exclusive with ``endpoint``.
         modalities: List of modality names this expert consumes.  Every
             entry must correspond to a modality declared in the
             :attr:`APMoEConfig.modalities` list.
+        endpoint: Full HTTP/HTTPS URL of a remote model server.  When set,
+            the framework POSTs the processed modality data to this URL at
+            inference time instead of running local inference.  Mutually
+            exclusive with ``weights``.
+        endpoint_headers: HTTP headers to attach to every request.  Values
+            that start with ``$`` are expanded from environment variables
+            at bootstrap time (e.g. ``"$MY_API_KEY"``).
+        endpoint_timeout: Read timeout in seconds for HTTP requests to the
+            remote endpoint (default 10.0).
+        request_template: A nested JSON-serialisable dict that forms the
+            body sent to the remote endpoint.  Leaf string values may
+            contain placeholder expressions of the form
+            ``"{{modalities.<name>}}"`` (replaced with the serialised
+            modality data) or ``"{{expert_name}}"`` (replaced with the
+            expert's configured name).  When ``None``, the framework sends
+            the default APMoE schema::
+
+                {"expert_name": "...", "modalities": {"<name>": ...}}
+
+            **HuggingFace example**::
+
+                {"inputs": "{{modalities.keystroke}}"}
+
+            **Multi-field example**::
+
+                {"model": "age-v1", "data": "{{modalities.image}}"}
+
+        response_mapping: Maps :class:`~apmoe.core.types.ExpertOutput`
+            field names to dot-paths in the remote JSON response.  Supported
+            keys: ``"predicted_age"`` (required), ``"confidence"``
+            (optional, defaults to ``-1.0``), ``"metadata"`` (optional,
+            defaults to ``{}``).
+
+            **Example** — map HuggingFace response::
+
+                {"predicted_age": "[0].age", "confidence": "[0].score"}
+
+            When ``None`` (default), the framework expects the response to
+            contain top-level ``predicted_age``, ``confidence``, and
+            ``metadata`` keys directly.
         extra: Any additional expert-specific config keys that the concrete
             class may consume (e.g. ``temperature``, ``threshold``).
     """
 
     name: str
     class_path: str = Field(..., alias="class")
-    weights: str
+    weights: str | None = None
     modalities: list[str]
+    # --- Remote-endpoint fields ---
+    endpoint: str | None = None
+    endpoint_headers: dict[str, str] = Field(default_factory=dict)
+    endpoint_timeout: float = 10.0
+    request_template: dict[str, Any] | None = None
+    response_mapping: dict[str, str] | None = None
     extra: dict[str, Any] = Field(default_factory=dict)
 
     model_config = {"populate_by_name": True}
@@ -122,6 +173,23 @@ class ExpertConfig(BaseModel):
         if not v:
             raise ValueError("An expert must declare at least one modality.")
         return v
+
+    @model_validator(mode="after")
+    def validate_weights_or_endpoint(self) -> "ExpertConfig":
+        """Ensure exactly one of ``weights`` or ``endpoint`` is provided."""
+        has_weights = self.weights is not None
+        has_endpoint = self.endpoint is not None
+        if has_weights and has_endpoint:
+            raise ValueError(
+                f"Expert '{self.name}': provide either 'weights' (local) or "
+                f"'endpoint' (remote), not both."
+            )
+        if not has_weights and not has_endpoint:
+            raise ValueError(
+                f"Expert '{self.name}': one of 'weights' (local file path) or "
+                f"'endpoint' (remote HTTP URL) is required."
+            )
+        return self
 
 
 class AggregationConfig(BaseModel):

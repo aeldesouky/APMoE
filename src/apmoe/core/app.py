@@ -310,9 +310,11 @@ class APMoEApp:
         if unhealthy:
             issues.append(f"Experts not loaded: {unhealthy}")
 
-        # Expert weight file existence
+        # Expert weight file existence (skip remote experts — no local file)
         for expert_cfg in self._config.apmoe.experts:
-            weights_path = Path(expert_cfg.weights)
+            if expert_cfg.endpoint is not None:
+                continue  # remote expert — no local weight file to check
+            weights_path = Path(expert_cfg.weights)  # type: ignore[arg-type]
             if not weights_path.exists():
                 issues.append(
                     f"Weight file missing for expert '{expert_cfg.name}': {weights_path}"

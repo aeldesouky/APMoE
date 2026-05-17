@@ -51,6 +51,9 @@ if TYPE_CHECKING:
 #: ``@expert_registry.register("name")``.
 expert_registry: Registry[ExpertPlugin] = Registry("experts")
 
+#: Sentinel class path for the built-in remote expert.
+_REMOTE_EXPERT_CLASS_PATH: str = "apmoe.experts.remote.RemoteExpert"
+
 
 class ExpertRegistry:
     """Manages live :class:`~apmoe.experts.base.ExpertPlugin` instances.
@@ -265,6 +268,8 @@ class ExpertRegistry:
 
         For each :class:`~apmoe.core.config.ExpertConfig`:
 
+        **Local expert** (``weights`` is set):
+
         1. Validates that the expert's modalities are declared (via
            :meth:`validate_expert_modalities`).
         2. Resolves the class via :data:`expert_registry` (supports dotted
@@ -272,6 +277,18 @@ class ExpertRegistry:
         3. Instantiates the class (constructor must accept no required args).
         4. Calls :meth:`~apmoe.experts.base.ExpertPlugin.load_weights` with
            the configured ``weights`` path.
+        5. Registers the live instance.
+
+        **Remote expert** (``endpoint`` is set, class is
+        ``apmoe.experts.remote.RemoteExpert``):
+
+        1-2. Same validation and class resolution.
+        3. Instantiates :class:`~apmoe.experts.remote.RemoteExpert` passing
+           ``endpoint``, ``endpoint_headers``, ``endpoint_timeout``,
+           ``request_template``, and ``response_mapping`` as constructor kwargs.
+        4. Calls :meth:`~apmoe.experts.base.ExpertPlugin.load_weights` with
+           an empty string (the method validates httpx is installed and expands
+           env-var headers; no file is read).
         5. Registers the live instance.
 
         Args:
@@ -291,20 +308,55 @@ class ExpertRegistry:
 
         registry = cls()
         for expert_cfg in expert_configs:
-            # Resolve class
+            is_remote = expert_cfg.endpoint is not None
+
+            # Resolve class ------------------------------------------------
             try:
                 expert_cls: type[ExpertPlugin] = expert_registry.resolve(
                     expert_cfg.class_path
                 )
-            except RegistryError as exc:
-                raise ExpertError(
-                    f"Cannot resolve expert class '{expert_cfg.class_path}': {exc}",
-                    context={"expert": expert_cfg.name, "class": expert_cfg.class_path},
-                ) from exc
+            except RegistryError:
+                if is_remote:
+                    # Auto-import RemoteExpert so it self-registers
+                    from apmoe.experts.remote import RemoteExpert  # noqa: F401
+                    try:
+                        expert_cls = expert_registry.resolve(expert_cfg.class_path)
+                    except RegistryError as exc2:
+                        raise ExpertError(
+                            f"Cannot resolve remote expert class '{expert_cfg.class_path}': {exc2}",
+                            context={"expert": expert_cfg.name, "class": expert_cfg.class_path},
+                        ) from exc2
+                else:
+                    raise ExpertError(
+                        f"Cannot resolve expert class '{expert_cfg.class_path}'",
+                        context={"expert": expert_cfg.name, "class": expert_cfg.class_path},
+                    )
 
-            # Instantiate
+            # Instantiate ---------------------------------------------------
             try:
-                instance: ExpertPlugin = expert_cls()
+                if is_remote:
+                    from apmoe.experts.remote import RemoteExpert
+                    if not issubclass(expert_cls, RemoteExpert):
+                        raise ExpertError(
+                            f"Expert '{expert_cfg.name}' has 'endpoint' set but "
+                            f"class '{expert_cfg.class_path}' is not a RemoteExpert "
+                            f"subclass.  Use class 'apmoe.experts.remote.RemoteExpert' "
+                            f"or a subclass of it for remote experts.",
+                            context={"expert": expert_cfg.name},
+                        )
+                    instance: ExpertPlugin = expert_cls(
+                        expert_name=expert_cfg.name,
+                        modalities=expert_cfg.modalities,
+                        endpoint=expert_cfg.endpoint,
+                        endpoint_headers=dict(expert_cfg.endpoint_headers),
+                        endpoint_timeout=expert_cfg.endpoint_timeout,
+                        request_template=expert_cfg.request_template,
+                        response_mapping=expert_cfg.response_mapping,
+                    )
+                else:
+                    instance = expert_cls()
+            except ExpertError:
+                raise
             except Exception as exc:
                 raise ExpertError(
                     f"Failed to instantiate expert '{expert_cfg.name}' "
@@ -318,16 +370,17 @@ class ExpertRegistry:
                     context={"expert": expert_cfg.name},
                 )
 
-            # Load weights
+            # Load weights (or validate remote prerequisites) ---------------
+            weights_path = expert_cfg.weights or ""
             try:
-                instance.load_weights(expert_cfg.weights)
+                instance.load_weights(weights_path)
             except ExpertError:
                 raise
             except Exception as exc:
                 raise ExpertError(
                     f"Expert '{expert_cfg.name}' failed to load weights "
-                    f"from '{expert_cfg.weights}': {exc}",
-                    context={"expert": expert_cfg.name, "weights": expert_cfg.weights},
+                    f"from '{weights_path}': {exc}",
+                    context={"expert": expert_cfg.name, "weights": weights_path},
                 ) from exc
 
             registry.register_instance(instance)
