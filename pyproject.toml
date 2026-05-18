@@ -38,6 +38,7 @@ remote = [
 ]
 security = [
     "PyJWT[crypto]>=2.8",    # Required by JWTBearerAuthProvider
+    "cryptography>=42.0",    # Required by RSA-signed remote model manifests
 ]
 redis = [
     "redis>=5.0",            # Required by Redis-backed invalidation/rate-limit stores

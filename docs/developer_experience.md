@@ -93,16 +93,20 @@ APMoE's true power lies in its dependency injection architecture. Instead of har
 
 ## 6. Serving Middleware and Security Out-of-the-Box
 
-The `apmoe serve` command generates a robust FastAPI ASGI application wrapped in multiple layers of production-ready middleware:
+The `apmoe serve` command generates a robust FastAPI ASGI application wrapped in multiple layers of production-ready middleware.
 
-**✅ Currently Implemented:**
-- **CORS Middleware**: Native, configurable Cross-Origin settings to allow immediate web dashboard integrations.
+**Currently Implemented:**
+- **CORS Middleware**: Native, configurable Cross-Origin settings to allow web dashboard integrations.
 - **Request Logging**: Built-in correlation ID tracking (`X-Correlation-ID`) tied to structured logs for every inbound request.
-- **Rate Limiting**: In-memory sliding window rate limits capable of protecting heavy AI inference endpoints from exhaustion.
-- **AuthPlugin Hook**: A clean, abstract interface for authentication. Developers can pass an `AuthPlugin` instance directly to `create_api()`, automatically gating endpoints without needing to manipulate FastAPI's routing directly.
+- **Stateless Authn/Authz**: JWT Bearer authentication, route-scope authorization, and fail-closed serving defaults.
+- **Token Invalidation**: In-memory or Redis-backed JWT `jti` invalidation, with an abstract store interface for external backends.
+- **Rate Limiting**: In-memory or Redis-backed sliding-window rate limits for protecting heavy AI inference endpoints.
+- **Remote Expert Hardening**: Production-gated endpoint allowlists, HTTPS/private-network safeguards, response byte caps, and JSON content-type checks.
+- **Model Integrity**: Local SHA-256 artifact checks and RSA-PSS-SHA256 signed remote manifests verified with pinned public keys.
+- **Auditability**: Structured security audit events, custom audit hooks, global correlation IDs, and secret redaction.
+- **Legacy AuthPlugin Hook**: Backwards-compatible binary authentication for existing integrations.
 
-**🔄 In Progress:**
-- **Authorization & Access Control**: While authentication (identity verification) is handled via the `AuthPlugin`, granular authorization is actively being developed. Future updates will introduce role-based access control (RBAC) and endpoint-level permissions directly in the serving layer.
+See [`docs/dev/security.md`](./dev/security.md) for the full security reference and production checklist.
 
 ## 7. Observability
 

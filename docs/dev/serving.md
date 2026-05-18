@@ -80,13 +80,43 @@ checks.
 
 ## Request logging
 
+For the full security reference and production checklist, see
+[security.md](security.md).
+
 `RequestLoggingMiddleware`:
-- generates a UUID4 correlation ID per request
+- accepts a safe inbound `X-Correlation-ID` value or generates a UUID4 value
 - stores it as `request.state.correlation_id`
 - returns it in response header `X-Correlation-ID`
 - emits structured JSON logs with method, path, query, status, duration, client
 
 Use this header for cross-service request tracing.
+
+Sensitive query parameters such as `token`, `api_key`, and `secret` are
+redacted before logging.
+
+---
+
+## Security audit hooks
+
+Security-sensitive events are emitted as `SecurityAuditEvent` objects with the
+current correlation ID. The default sink writes structured JSON to
+`apmoe.security.audit`; applications can also attach hooks:
+
+```python
+from apmoe.core.security import SecurityAuditEvent
+
+def send_to_siem(event: SecurityAuditEvent) -> None:
+    ...
+
+apmoe_app.security_audit_hooks.append(send_to_siem)
+api = create_api(apmoe_app, security_provider=provider)
+```
+
+Events include authentication success/failure, authorization allow/deny,
+rate-limit blocks, token invalidation, remote endpoint allow/block, remote call
+success/failure, response-limit blocks, and model integrity pass/fail. Set
+`apmoe.security.audit_enabled=false` to suppress serving audit events or
+`audit_success_events=false` to log only denials/blocks for authn/authz.
 
 ---
 
@@ -205,6 +235,28 @@ class RedisTokenInvalidationStore(TokenInvalidationStore):
 
 Pass the same store to `JWTBearerAuthProvider` when constructing the provider.
 Redis is optional and not imported unless a Redis store is selected.
+
+---
+
+## Remote expert security
+
+Remote expert endpoints are governed by `apmoe.security`:
+- non-production defaults missing `remote_endpoint_allowlist` to `["*"]`
+- production remote experts require an explicit allowlist without `"*"`
+- endpoint and manifest hosts are matched case-insensitively against exact
+  hosts or wildcard suffixes such as `"*.example.com"`
+- HTTPS is enforced by default
+- localhost, loopback, private, link-local, reserved, multicast, and metadata
+  IP hosts are blocked unless `remote_allow_private_networks=true`
+
+Remote responses are capped by `remote_response_max_bytes` before JSON parsing.
+Set `experts[].endpoint_response_max_bytes` to override the global cap for a
+specific expert. Obvious non-JSON content types are rejected.
+
+Local model artifacts can be pinned with `experts[].integrity.sha256`. Remote
+model integrity uses an RSA-PSS-SHA256 signed manifest verified with a pinned
+public key; a plain hash served by the remote model runtime is intentionally not
+treated as sufficient. See `docs/dev/configuration.md` for config examples.
 
 ---
 

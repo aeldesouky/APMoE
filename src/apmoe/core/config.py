@@ -168,6 +168,8 @@ class ExpertConfig(BaseModel):
     endpoint_timeout: float = 10.0
     request_template: dict[str, Any] | None = None
     response_mapping: dict[str, str] | None = None
+    endpoint_response_max_bytes: int | None = None
+    integrity: "ExpertIntegrityConfig | None" = None
     extra: dict[str, Any] = Field(default_factory=dict)
 
     model_config = {"populate_by_name": True}
@@ -178,6 +180,14 @@ class ExpertConfig(BaseModel):
         """Ensure at least one modality is declared per expert."""
         if not v:
             raise ValueError("An expert must declare at least one modality.")
+        return v
+
+    @field_validator("endpoint_response_max_bytes")
+    @classmethod
+    def endpoint_response_max_bytes_must_be_positive(cls, v: int | None) -> int | None:
+        """Validate optional per-expert remote response limit."""
+        if v is not None and v < 1:
+            raise ValueError("endpoint_response_max_bytes must be >= 1.")
         return v
 
     @model_validator(mode="after")
@@ -196,6 +206,35 @@ class ExpertConfig(BaseModel):
                 f"'endpoint' (remote HTTP URL) is required."
             )
         return self
+
+
+class ExpertIntegrityConfig(BaseModel):
+    """Optional integrity policy for local or remote expert artifacts."""
+
+    sha256: str | None = None
+    manifest_url: str | None = None
+    manifest_public_key: str | None = None
+    manifest_required: bool = False
+    signature_algorithm: str = "RSA-PSS-SHA256"
+
+    @field_validator("sha256")
+    @classmethod
+    def sha256_must_be_hex(cls, v: str | None) -> str | None:
+        """Validate SHA-256 digest shape when configured."""
+        if v is None:
+            return v
+        value = v.strip().lower()
+        if len(value) != 64 or any(ch not in "0123456789abcdef" for ch in value):
+            raise ValueError("sha256 must be a 64-character hex digest.")
+        return value
+
+    @field_validator("signature_algorithm")
+    @classmethod
+    def signature_algorithm_must_be_supported(cls, v: str) -> str:
+        """Validate manifest signature algorithm."""
+        if v != "RSA-PSS-SHA256":
+            raise ValueError("Only RSA-PSS-SHA256 is supported.")
+        return v
 
 
 class AggregationConfig(BaseModel):
@@ -293,6 +332,25 @@ class ServingConfig(BaseModel):
         return self
 
 
+class SecurityConfig(BaseModel):
+    """Framework-level security hardening settings."""
+
+    remote_endpoint_allowlist: list[str] | None = None
+    remote_enforce_https: bool = True
+    remote_allow_private_networks: bool = False
+    remote_response_max_bytes: int = 1_048_576
+    audit_enabled: bool = True
+    audit_success_events: bool = True
+
+    @field_validator("remote_response_max_bytes")
+    @classmethod
+    def remote_response_max_bytes_must_be_positive(cls, v: int) -> int:
+        """Validate remote response byte limit."""
+        if v < 1:
+            raise ValueError("remote_response_max_bytes must be >= 1.")
+        return v
+
+
 class APMoEConfig(BaseModel):
     """Top-level framework configuration block (the ``"apmoe"`` JSON key).
 
@@ -313,7 +371,20 @@ class APMoEConfig(BaseModel):
     experts: list[ExpertConfig]
     aggregation: AggregationConfig
     serving: ServingConfig = Field(default_factory=ServingConfig)
+    environment: str = "development"
+    security: SecurityConfig = Field(default_factory=SecurityConfig)
     confidence_threshold: float | None = None
+
+    @field_validator("environment")
+    @classmethod
+    def environment_must_be_supported(cls, v: str) -> str:
+        """Validate environment mode."""
+        normalised = v.strip().lower()
+        if normalised not in {"development", "test", "staging", "production"}:
+            raise ValueError(
+                "environment must be one of: development, test, staging, production."
+            )
+        return normalised
 
     @field_validator("confidence_threshold")
     @classmethod
@@ -360,6 +431,19 @@ class APMoEConfig(BaseModel):
                     f"Duplicate expert name '{e.name}'. Each expert must have a unique name."
                 )
             seen.add(e.name)
+        return self
+
+    @model_validator(mode="after")
+    def validate_production_remote_allowlist(self) -> "APMoEConfig":
+        """Require explicit remote endpoint allowlist in production."""
+        has_remote = any(expert.endpoint is not None for expert in self.experts)
+        allowlist = self.security.remote_endpoint_allowlist
+        unsafe = allowlist is None or not allowlist or "*" in allowlist
+        if self.environment == "production" and has_remote and unsafe:
+            raise ValueError(
+                "Production remote experts require an explicit "
+                "apmoe.security.remote_endpoint_allowlist without '*'."
+            )
         return self
 
 
@@ -432,6 +516,10 @@ def _apply_env_overrides(data: dict[str, Any]) -> None:
     """
     apmoe_section: dict[str, Any] = data.setdefault("apmoe", {})
     serving_section: dict[str, Any] = apmoe_section.setdefault("serving", {})
+
+    env_mode = os.environ.get("APMOE_ENV")
+    if env_mode is not None:
+        apmoe_section["environment"] = env_mode
 
     for env_key, (field_name, cast) in _SERVING_ENV_MAP.items():
         raw = os.environ.get(env_key)

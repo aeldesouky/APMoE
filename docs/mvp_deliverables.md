@@ -13,7 +13,7 @@ Status uses **fully implemented** for behavior that matches the stated design in
 | **Multimodal pipeline (built-ins + extensibility)** | Fully implemented | Built-in modalities work out of the box; swap or extend every stage via config and IoC. |
 | **Mixture-of-experts inference & aggregation** | Partially implemented | MoE + default aggregator shipped; uneven confidence semantics; experts run sequentially. |
 | **HTTP API & interactive docs** | Partially implemented | FastAPI, JSON prediction body, health/info, OpenAPI UI; no multipart in MVP. |
-| **CORS, authentication & rate limiting** | Partially implemented (stubs / optional) | CORS/auth are wiring stubs, not full hardening; rate limit opt-in; correlation logging on. |
+| **Serving security & rate limiting** | Fully implemented | CORS, stateless JWT authn/authz, pluggable token invalidation, Redis/shared rate limiting, correlation IDs, audit logs, remote allowlists, response caps, and model integrity controls. See [dev/security.md](dev/security.md). |
 | **Developer documentation (primary DX artifact)** | Fully implemented | `docs/dev/`, config and integration notes, DX overview—authoritative for extension. |
 | **Other project & user-facing docs** | To be updated for final delivery | Root README and narrative copy deferred to final project polish. |
 | **Error handling & diagnostics (DX)** | Fully implemented | Typed errors, fast config validation, clear CLI/HTTP errors, request correlation. |

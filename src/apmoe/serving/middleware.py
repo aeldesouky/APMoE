@@ -19,7 +19,19 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
+from apmoe.core.security import emit_security_audit, ensure_correlation_id, redact_url
+
 logger = logging.getLogger("apmoe.serving")
+
+
+def _audit_sinks(request: Request) -> list[Any] | None:
+    """Return app-configured audit sinks, honoring audit disablement."""
+    return getattr(request.app.state, "security_audit_hooks", None)
+
+
+def _audit_success_enabled(request: Request) -> bool:
+    """Return whether successful security events should be emitted."""
+    return bool(getattr(request.app.state, "audit_success_events", True))
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +90,11 @@ class InMemoryTokenInvalidationStore(TokenInvalidationStore):
         self._prune()
         if expires_at > datetime.now(UTC):
             self._invalidated[token_id] = expires_at
+            emit_security_audit(
+                "token_invalidation",
+                "success",
+                metadata={"token_id": token_id, "expires_at": expires_at.isoformat()},
+            )
 
 
 class RedisTokenInvalidationStore(TokenInvalidationStore):
@@ -109,6 +126,11 @@ class RedisTokenInvalidationStore(TokenInvalidationStore):
         ttl_seconds = int((expires_at - datetime.now(UTC)).total_seconds())
         if ttl_seconds > 0:
             self._client.setex(self._key(token_id), ttl_seconds, "1")
+            emit_security_audit(
+                "token_invalidation",
+                "success",
+                metadata={"token_id": token_id, "expires_at": expires_at.isoformat()},
+            )
 
 
 class StatelessAuthProvider(ABC):
@@ -288,6 +310,15 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         if inspect.isawaitable(context):
             context = await context
         if context is None:
+            emit_security_audit(
+                "authentication",
+                "failure",
+                path=request.url.path,
+                method=request.method,
+                client_ip=request.client.host if request.client else None,
+                reason="invalid_or_missing_credentials",
+                sinks=_audit_sinks(request),
+            )
             return JSONResponse(
                 status_code=401,
                 content={"detail": "Unauthorized."},
@@ -295,6 +326,16 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             )
 
         request.state.auth_context = context
+        if _audit_success_enabled(request):
+            emit_security_audit(
+                "authentication",
+                "success",
+                subject=context.subject,
+                path=request.url.path,
+                method=request.method,
+                client_ip=request.client.host if request.client else None,
+                sinks=_audit_sinks(request),
+            )
         return await call_next(request)
 
 
@@ -320,9 +361,38 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
 
         context = getattr(request.state, "auth_context", None)
         if not isinstance(context, AuthContext):
+            emit_security_audit(
+                "authorization",
+                "failure",
+                path=request.url.path,
+                method=request.method,
+                client_ip=request.client.host if request.client else None,
+                reason="missing_auth_context",
+                sinks=_audit_sinks(request),
+            )
             return JSONResponse(status_code=403, content={"detail": "Forbidden."})
         if not self._authorization_policy.authorize(context, request):
+            emit_security_audit(
+                "authorization",
+                "failure",
+                subject=context.subject,
+                path=request.url.path,
+                method=request.method,
+                client_ip=request.client.host if request.client else None,
+                reason="insufficient_scope",
+                sinks=_audit_sinks(request),
+            )
             return JSONResponse(status_code=403, content={"detail": "Forbidden."})
+        if _audit_success_enabled(request):
+            emit_security_audit(
+                "authorization",
+                "success",
+                subject=context.subject,
+                path=request.url.path,
+                method=request.method,
+                client_ip=request.client.host if request.client else None,
+                sinks=_audit_sinks(request),
+            )
         return await call_next(request)
 
 
@@ -336,7 +406,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         """Process the request, attach a correlation ID, and log the outcome."""
-        correlation_id = str(uuid.uuid4())
+        correlation_id = ensure_correlation_id(request.headers.get("X-Correlation-ID"))
         request.state.correlation_id = correlation_id
         started_at = time.perf_counter()
 
@@ -358,11 +428,15 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
         duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
         status_code = response.status_code
+        redacted_url = redact_url(str(request.url))
+        redacted_query = ""
+        if "?" in redacted_url:
+            redacted_query = redacted_url.split("?", 1)[1].split("#", 1)[0]
         record: dict[str, object] = {
             "correlation_id": correlation_id,
             "method": request.method,
             "path": request.url.path,
-            "query": str(request.url.query) or None,
+            "query": redacted_query or None,
             "status_code": status_code,
             "duration_ms": duration_ms,
             "client_host": request.client.host if request.client else None,
@@ -478,6 +552,16 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             limit=self._limit,
             window_seconds=self._window_seconds,
         ):
+            emit_security_audit(
+                "rate_limit",
+                "failure",
+                path=request.url.path,
+                method=request.method,
+                client_ip=client_ip,
+                reason="limit_exceeded",
+                metadata={"limit": self._limit, "window_seconds": self._window_seconds},
+                sinks=_audit_sinks(request),
+            )
             return JSONResponse(
                 status_code=429,
                 content={

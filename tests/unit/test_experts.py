@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 
-from apmoe.core.config import ExpertConfig, ModalityConfig, PipelineConfig
+from apmoe.core.config import ExpertConfig, ModalityConfig, PipelineConfig, SecurityConfig
 from apmoe.core.exceptions import ExpertError
 from apmoe.core.types import EmbeddingResult, ExpertOutput, ModalityData, ProcessedInput
 from apmoe.experts.base import ExpertPlugin
@@ -425,6 +427,82 @@ class TestExpertRegistryFromConfigs:
         registry = ExpertRegistry.from_configs(expert_cfgs, modality_cfgs)
         assert len(registry) == 2
         assert registry.all_healthy() is True
+
+    def test_from_configs_local_sha256_match_passes(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        weights = tmp_path / "weights.bin"
+        weights.write_bytes(b"trusted-model-bytes")
+        digest = hashlib.sha256(weights.read_bytes()).hexdigest()
+        expert_cfgs = [
+            ExpertConfig(
+                name="visual_expert",
+                **{"class": "_test_visual_expert"},
+                weights=str(weights),
+                modalities=["visual"],
+                integrity={"sha256": digest},
+            )
+        ]
+        registry = ExpertRegistry.from_configs(
+            expert_cfgs,
+            [_make_modality_config("visual")],
+        )
+        assert registry.all_healthy() is True
+
+    def test_from_configs_local_sha256_mismatch_raises(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        weights = tmp_path / "weights.bin"
+        weights.write_bytes(b"tampered-model-bytes")
+        expert_cfgs = [
+            ExpertConfig(
+                name="visual_expert",
+                **{"class": "_test_visual_expert"},
+                weights=str(weights),
+                modalities=["visual"],
+                integrity={"sha256": "0" * 64},
+            )
+        ]
+        with pytest.raises(ExpertError, match="SHA-256 mismatch"):
+            ExpertRegistry.from_configs(expert_cfgs, [_make_modality_config("visual")])
+
+    def test_optional_remote_manifest_failure_does_not_block_non_production(self) -> None:
+        expert_cfgs = [
+            ExpertConfig(
+                name="remote_visual",
+                **{"class": "apmoe.experts.remote.RemoteExpert"},
+                endpoint="https://models.example.com/predict",
+                modalities=["visual"],
+                integrity={
+                    "manifest_url": "https://models.example.com/manifest.json",
+                    "manifest_required": False,
+                },
+            )
+        ]
+        registry = ExpertRegistry.from_configs(
+            expert_cfgs,
+            [_make_modality_config("visual")],
+            security_config=SecurityConfig(remote_endpoint_allowlist=["models.example.com"]),
+            environment="development",
+        )
+        assert registry.get("remote_visual").is_loaded is True
+
+    def test_configured_remote_manifest_failure_blocks_production(self) -> None:
+        expert_cfgs = [
+            ExpertConfig(
+                name="remote_visual",
+                **{"class": "apmoe.experts.remote.RemoteExpert"},
+                endpoint="https://models.example.com/predict",
+                modalities=["visual"],
+                integrity={
+                    "manifest_url": "https://models.example.com/manifest.json",
+                    "manifest_required": False,
+                },
+            )
+        ]
+        with pytest.raises(ExpertError, match="manifest_public_key"):
+            ExpertRegistry.from_configs(
+                expert_cfgs,
+                [_make_modality_config("visual")],
+                security_config=SecurityConfig(remote_endpoint_allowlist=["models.example.com"]),
+                environment="production",
+            )
 
     def test_from_configs_unknown_class_raises(self) -> None:
         expert_cfgs = [

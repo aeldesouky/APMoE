@@ -95,6 +95,16 @@ Legacy unversioned endpoints remain temporarily and return `Deprecation`
 and `Sunset` headers, plus `X-API-Version: 1`, to signal the migration
 window for clients.
 
+### Security
+
+APMoE includes framework-level security controls for stateless JWT
+authentication, scope authorization, shared Redis-backed token invalidation and
+rate limiting, remote expert endpoint allowlists, remote response limits,
+local SHA-256 model checks, RSA-signed remote model manifests, correlation IDs,
+auditable security logs, and secret redaction. See
+[`docs/dev/security.md`](docs/dev/security.md) for the full reference and
+production checklist.
+
 ### Confidence scores
 
 Per-expert outputs include a `confidence` field. Values are in **`[0.0, 1.0]`** when the model reports a meaningful score (for example, the keystroke ONNX classifier uses the maximum class probability). The bundled **face (Keras) regressor** does not produce a calibrated confidence: it reports **`-1.0`**, meaning *not applicable / not reported*. The aggregated prediction’s `confidence` remains in `[0.0, 1.0]`. See `docs/face_integration.md` and `docs/dev/core/types.md` for details.

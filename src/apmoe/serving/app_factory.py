@@ -171,6 +171,14 @@ def create_api(
         redoc_url="/redoc",
         openapi_url="/openapi.json",
     )
+    security_cfg = getattr(getattr(app.config, "apmoe", None), "security", None)
+    audit_enabled = bool(getattr(security_cfg, "audit_enabled", True))
+    api.state.security_audit_hooks = (
+        getattr(app, "security_audit_hooks", None) if audit_enabled else []
+    )
+    api.state.audit_success_events = bool(
+        getattr(security_cfg, "audit_success_events", True)
+    )
 
     # 1. CORS — must be outermost so OPTIONS preflight requests are handled
     #    before any other middleware inspects them.

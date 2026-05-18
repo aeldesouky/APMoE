@@ -84,6 +84,59 @@ that `"endpoint"` replaces `"weights"` and the class is
 
 ---
 
+## Security controls
+
+For the full security reference and production checklist, see
+[`docs/dev/security.md`](dev/security.md).
+
+Remote expert endpoints are subject to the framework security policy when
+`APMoEApp.from_config()` builds the registry:
+
+- non-production defaults a missing `apmoe.security.remote_endpoint_allowlist`
+  to `["*"]`
+- production remote experts require an explicit non-wildcard allowlist
+- allowlist entries match endpoint hostnames only, with exact hosts and
+  wildcard suffixes like `"*.example.com"`
+- HTTPS is enforced by default
+- localhost, loopback, private, link-local, reserved, multicast, and metadata
+  IP hosts are denied unless `remote_allow_private_networks=true`
+- remote response bodies and signed manifests are capped by
+  `remote_response_max_bytes` before JSON parsing; `endpoint_response_max_bytes`
+  can override this per expert
+
+For remote model integrity, do not trust a plain hash served by the remote
+model runtime. Configure `experts[].integrity` with an RSA-PSS-SHA256 signed
+manifest and a pinned public key. The private signing key should live outside
+the model serving runtime, ideally in release CI or a KMS-backed signing flow.
+
+```json
+{
+  "apmoe": {
+    "environment": "production",
+    "security": {
+      "remote_endpoint_allowlist": ["models.example.com"],
+      "remote_response_max_bytes": 1048576
+    },
+    "experts": [
+      {
+        "name": "remote_age_expert",
+        "class": "apmoe.experts.remote.RemoteExpert",
+        "modalities": ["keystroke"],
+        "endpoint": "https://models.example.com/predict",
+        "integrity": {
+          "manifest_url": "https://models.example.com/.well-known/apmoe-manifest.json",
+          "manifest_public_key": "$APMOE_REMOTE_MANIFEST_PUBLIC_KEY",
+          "manifest_required": true,
+          "signature_algorithm": "RSA-PSS-SHA256"
+        }
+      }
+    ]
+  }
+}
+```
+
+---
+
 ## Environment variable substitution
 
 `$VAR` references are expanded from environment variables **at bootstrap time**

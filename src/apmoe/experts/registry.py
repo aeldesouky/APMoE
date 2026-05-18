@@ -34,9 +34,17 @@ Usage::
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
 from apmoe.core.exceptions import ExpertError, RegistryError
 from apmoe.core.registry import Registry
+from apmoe.core.security import (
+    emit_security_audit,
+    redact_url,
+    validate_remote_url,
+    verify_local_sha256,
+    verify_manifest_payload,
+)
 from apmoe.experts.base import ExpertPlugin
 
 if TYPE_CHECKING:
@@ -53,6 +61,165 @@ expert_registry: Registry[ExpertPlugin] = Registry("experts")
 
 #: Sentinel class path for the built-in remote expert.
 _REMOTE_EXPERT_CLASS_PATH: str = "apmoe.experts.remote.RemoteExpert"
+
+
+def _expand_env_value(value: str, *, expert_name: str, field: str) -> str:
+    """Expand a single $ENV_VAR value used by integrity config."""
+    import os
+
+    if value.startswith("$") and value.count("$") == 1:
+        env_key = value[1:]
+        env_value = os.environ.get(env_key)
+        if env_value is None:
+            raise ExpertError(
+                f"Expert '{expert_name}': {field} references unset environment "
+                f"variable '{env_key}'.",
+                context={"expert": expert_name, "field": field, "env_var": env_key},
+            )
+        return env_value
+    return value
+
+
+def _origin(url: str) -> str:
+    """Return scheme://host[:port] for a URL."""
+    parsed = urlparse(url)
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _verify_remote_manifest_if_configured(
+    expert_cfg: ExpertConfig,
+    *,
+    endpoint: str,
+    security_config: object | None,
+    environment: str,
+) -> None:
+    """Fetch and verify an RSA-signed remote model manifest when configured."""
+    integrity = expert_cfg.integrity
+    if integrity is None or integrity.manifest_url is None:
+        if integrity is not None and integrity.manifest_required:
+            raise ExpertError(
+                f"Expert '{expert_cfg.name}': manifest_required=true but manifest_url is missing.",
+                context={"expert": expert_cfg.name},
+            )
+        return
+    if not integrity.manifest_public_key:
+        exc = ExpertError(
+            f"Expert '{expert_cfg.name}': manifest_public_key is required for remote integrity.",
+            context={"expert": expert_cfg.name},
+        )
+        emit_security_audit(
+            "remote_manifest_integrity",
+            "failure",
+            expert_name=expert_cfg.name,
+            reason="missing_public_key",
+        )
+        if _manifest_failure_blocks(integrity, environment):
+            raise exc
+        return
+
+    manifest_url = _expand_env_value(
+        integrity.manifest_url,
+        expert_name=expert_cfg.name,
+        field="integrity.manifest_url",
+    )
+    public_key = _expand_env_value(
+        integrity.manifest_public_key,
+        expert_name=expert_cfg.name,
+        field="integrity.manifest_public_key",
+    )
+    if security_config is not None:
+        allowlist = getattr(security_config, "remote_endpoint_allowlist", None)
+        if allowlist is None and environment != "production":
+            allowlist = ["*"]
+        try:
+            validate_remote_url(
+                manifest_url,
+                allowlist=allowlist or [],
+                enforce_https=getattr(security_config, "remote_enforce_https", True),
+                allow_private_networks=getattr(
+                    security_config,
+                    "remote_allow_private_networks",
+                    False,
+                ),
+                purpose=f"Expert '{expert_cfg.name}' manifest",
+            )
+        except ExpertError as exc:
+            emit_security_audit(
+                "remote_manifest_integrity",
+                "failure",
+                expert_name=expert_cfg.name,
+                reason="endpoint_policy_failed",
+                metadata={"manifest_url": redact_url(manifest_url)},
+            )
+            if _manifest_failure_blocks(integrity, environment):
+                raise
+            return
+
+    try:
+        import httpx
+
+        response = httpx.get(
+            manifest_url,
+            timeout=getattr(expert_cfg, "endpoint_timeout", 10.0),
+        )
+        response.raise_for_status()
+        raw = response.content
+        max_bytes = getattr(security_config, "remote_response_max_bytes", 1_048_576)
+        if len(raw) > max_bytes:
+            raise ExpertError(
+                f"Expert '{expert_cfg.name}': remote model manifest exceeded {max_bytes} bytes.",
+                context={"expert": expert_cfg.name, "manifest_url": redact_url(manifest_url)},
+            )
+        manifest = response.json()
+        if not isinstance(manifest, dict):
+            raise ExpertError(
+                f"Expert '{expert_cfg.name}': remote model manifest must be a JSON object.",
+                context={"expert": expert_cfg.name},
+            )
+        verify_manifest_payload(
+            manifest,
+            public_key_pem=public_key,
+            expert_name=expert_cfg.name,
+            endpoint_origin=_origin(endpoint),
+        )
+    except ExpertError:
+        emit_security_audit(
+            "remote_manifest_integrity",
+            "failure",
+            expert_name=expert_cfg.name,
+            reason="verification_failed",
+            metadata={"manifest_url": redact_url(manifest_url)},
+        )
+        if _manifest_failure_blocks(integrity, environment):
+            raise
+        return
+    except Exception as exc:
+        emit_security_audit(
+            "remote_manifest_integrity",
+            "failure",
+            expert_name=expert_cfg.name,
+            reason=type(exc).__name__,
+            metadata={"manifest_url": redact_url(manifest_url)},
+        )
+        wrapped = ExpertError(
+            f"Expert '{expert_cfg.name}': remote model manifest verification failed: {exc}",
+            context={"expert": expert_cfg.name, "manifest_url": redact_url(manifest_url)},
+        )
+        if _manifest_failure_blocks(integrity, environment):
+            raise wrapped from exc
+        return
+
+    emit_security_audit(
+        "remote_manifest_integrity",
+        "success",
+        expert_name=expert_cfg.name,
+        metadata={"manifest_url": redact_url(manifest_url)},
+    )
+
+
+def _manifest_failure_blocks(integrity: object, environment: str) -> bool:
+    """Return whether a remote manifest failure should block startup."""
+    return environment == "production" or bool(getattr(integrity, "manifest_required", False))
 
 
 class ExpertRegistry:
@@ -263,6 +430,8 @@ class ExpertRegistry:
         cls,
         expert_configs: list[ExpertConfig],
         modality_configs: list[ModalityConfig],
+        security_config: object | None = None,
+        environment: str = "development",
     ) -> ExpertRegistry:
         """Build a live :class:`ExpertRegistry` from config objects.
 
@@ -352,6 +521,9 @@ class ExpertRegistry:
                         endpoint_timeout=expert_cfg.endpoint_timeout,
                         request_template=expert_cfg.request_template,
                         response_mapping=expert_cfg.response_mapping,
+                        endpoint_response_max_bytes=expert_cfg.endpoint_response_max_bytes,
+                        security_config=security_config,
+                        environment=environment,
                     )
                 else:
                     instance = expert_cls()
@@ -373,8 +545,34 @@ class ExpertRegistry:
             # Load weights (or validate remote prerequisites) ---------------
             weights_path = expert_cfg.weights or ""
             try:
+                if not is_remote and expert_cfg.integrity and expert_cfg.integrity.sha256:
+                    verify_local_sha256(
+                        weights_path,
+                        expert_cfg.integrity.sha256,
+                        expert_name=expert_cfg.name,
+                    )
+                    emit_security_audit(
+                        "local_artifact_integrity",
+                        "success",
+                        expert_name=expert_cfg.name,
+                        metadata={"algorithm": "sha256"},
+                    )
                 instance.load_weights(weights_path)
+                if is_remote and expert_cfg.integrity:
+                    _verify_remote_manifest_if_configured(
+                        expert_cfg,
+                        endpoint=getattr(instance, "endpoint", expert_cfg.endpoint or ""),
+                        security_config=security_config,
+                        environment=environment,
+                    )
             except ExpertError:
+                if not is_remote and expert_cfg.integrity and expert_cfg.integrity.sha256:
+                    emit_security_audit(
+                        "local_artifact_integrity",
+                        "failure",
+                        expert_name=expert_cfg.name,
+                        metadata={"algorithm": "sha256"},
+                    )
                 raise
             except Exception as exc:
                 raise ExpertError(

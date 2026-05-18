@@ -184,6 +184,8 @@ class TestParsedValues:
         assert serving.authorization_enabled is True
         assert serving.token_invalidation_store == "memory"
         assert serving.rate_limit_store == "memory"
+        assert cfg.apmoe.environment == "development"
+        assert cfg.apmoe.security.remote_response_max_bytes == 1_048_576
 
     def test_redis_store_config_parses(self, tmp_path: Path) -> None:
         data = _base_config()
@@ -215,6 +217,33 @@ class TestParsedValues:
         data = _base_config()
         data["apmoe"]["serving"] = {"rate_limit_store": "postgres"}
         with pytest.raises(ConfigurationError, match="Store backend"):
+            load_config(_write_config(tmp_path / "c.json", data))
+
+    def test_non_production_remote_without_allowlist_loads(self, tmp_path: Path) -> None:
+        data = _base_config()
+        data["apmoe"]["experts"][0].pop("weights")
+        data["apmoe"]["experts"][0]["class"] = "apmoe.experts.remote.RemoteExpert"
+        data["apmoe"]["experts"][0]["endpoint"] = "https://models.example.com/predict"
+        cfg = load_config(_write_config(tmp_path / "c.json", data))
+        assert cfg.apmoe.environment == "development"
+
+    def test_production_remote_without_allowlist_raises(self, tmp_path: Path) -> None:
+        data = _base_config()
+        data["apmoe"]["environment"] = "production"
+        data["apmoe"]["experts"][0].pop("weights")
+        data["apmoe"]["experts"][0]["class"] = "apmoe.experts.remote.RemoteExpert"
+        data["apmoe"]["experts"][0]["endpoint"] = "https://models.example.com/predict"
+        with pytest.raises(ConfigurationError, match="remote_endpoint_allowlist"):
+            load_config(_write_config(tmp_path / "c.json", data))
+
+    def test_production_remote_wildcard_allowlist_raises(self, tmp_path: Path) -> None:
+        data = _base_config()
+        data["apmoe"]["environment"] = "production"
+        data["apmoe"]["security"] = {"remote_endpoint_allowlist": ["*"]}
+        data["apmoe"]["experts"][0].pop("weights")
+        data["apmoe"]["experts"][0]["class"] = "apmoe.experts.remote.RemoteExpert"
+        data["apmoe"]["experts"][0]["endpoint"] = "https://models.example.com/predict"
+        with pytest.raises(ConfigurationError, match="remote_endpoint_allowlist"):
             load_config(_write_config(tmp_path / "c.json", data))
 
     def test_full_config_multi_modality(self, full_config_file: Path) -> None:
@@ -320,3 +349,10 @@ class TestEnvVarOverrides:
         monkeypatch.setenv("APMOE_SERVING_AUTHENTICATION_ENABLED", "maybe")
         with pytest.raises(ConfigurationError, match="cannot be cast to bool"):
             load_config(minimal_config_file)
+
+    def test_apmoe_env_override(
+        self, minimal_config_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("APMOE_ENV", "production")
+        cfg = load_config(minimal_config_file)
+        assert cfg.apmoe.environment == "production"

@@ -87,6 +87,12 @@ import os
 from typing import Any
 
 from apmoe.core.exceptions import ExpertError
+from apmoe.core.security import (
+    emit_security_audit,
+    redact_url,
+    redact_value,
+    validate_remote_url,
+)
 from apmoe.core.types import EmbeddingResult, ExpertOutput, ModalityData, ProcessedInput
 from apmoe.experts.base import ExpertPlugin
 from apmoe.experts.registry import expert_registry
@@ -398,6 +404,9 @@ class RemoteExpert(ExpertPlugin):
         endpoint_timeout: float = 10.0,
         request_template: dict[str, Any] | None = None,
         response_mapping: dict[str, str] | None = None,
+        endpoint_response_max_bytes: int | None = None,
+        security_config: Any | None = None,
+        environment: str = "development",
     ) -> None:
         """Initialise the remote expert.
 
@@ -419,6 +428,9 @@ class RemoteExpert(ExpertPlugin):
         self._timeout = endpoint_timeout
         self._request_template: dict[str, Any] | None = request_template
         self._response_mapping: dict[str, str] | None = response_mapping
+        self._response_max_bytes = endpoint_response_max_bytes
+        self._security_config = security_config
+        self._environment = environment
         self._headers: dict[str, str] = {}  # populated in load_weights
         self._loaded: bool = False
 
@@ -434,6 +446,11 @@ class RemoteExpert(ExpertPlugin):
     def declared_modalities(self) -> list[str]:
         """Return the modality list from config."""
         return list(self._modalities)
+
+    @property
+    def endpoint(self) -> str:
+        """Return the resolved remote endpoint URL."""
+        return self._endpoint
 
     def load_weights(self, path: str) -> None:  # noqa: ARG002
         """Validate connectivity prerequisites and expand env-var references.
@@ -465,6 +482,7 @@ class RemoteExpert(ExpertPlugin):
 
         # Expand env vars in the endpoint URL
         self._endpoint = _expand_str(self._endpoint, self._expert_name, "endpoint")
+        self._validate_endpoint_policy()
 
         # Expand env vars in non-placeholder template values
         if self._request_template is not None:
@@ -476,7 +494,7 @@ class RemoteExpert(ExpertPlugin):
         logger.debug(
             "RemoteExpert '%s' initialised — endpoint: %s",
             self._expert_name,
-            self._endpoint,
+            redact_url(self._endpoint),
         )
 
     def predict(self, inputs: dict[str, ProcessedInput]) -> ExpertOutput:
@@ -501,7 +519,7 @@ class RemoteExpert(ExpertPlugin):
                 context={"expert": self._expert_name},
             )
 
-        import httpx  # local import — availability checked in load_weights
+        import httpx  # local import - availability checked in load_weights
 
         # --- Serialise modality inputs -----------------------------------
         serialised: dict[str, Any] = {
@@ -513,9 +531,9 @@ class RemoteExpert(ExpertPlugin):
 
         # --- POST to remote endpoint -------------------------------------
         logger.debug(
-            "RemoteExpert '%s' → POST %s",
+            "RemoteExpert '%s' POST %s",
             self._expert_name,
-            self._endpoint,
+            redact_url(self._endpoint),
         )
         try:
             response = httpx.post(
@@ -525,37 +543,64 @@ class RemoteExpert(ExpertPlugin):
                 timeout=self._timeout,
             )
             response.raise_for_status()
+            data = self._parse_limited_json_response(response)
         except httpx.TimeoutException as exc:
+            emit_security_audit(
+                "remote_call",
+                "failure",
+                expert_name=self._expert_name,
+                endpoint_host=self._endpoint_host(),
+                reason="timeout",
+            )
             raise ExpertError(
                 f"RemoteExpert '{self._expert_name}': request timed out after "
-                f"{self._timeout}s — {self._endpoint}",
-                context={"expert": self._expert_name, "endpoint": self._endpoint},
+                f"{self._timeout}s - {redact_url(self._endpoint)}",
+                context={"expert": self._expert_name, "endpoint": redact_url(self._endpoint)},
             ) from exc
         except httpx.HTTPStatusError as exc:
+            emit_security_audit(
+                "remote_call",
+                "failure",
+                expert_name=self._expert_name,
+                endpoint_host=self._endpoint_host(),
+                reason=f"http_{exc.response.status_code}",
+            )
             raise ExpertError(
                 f"RemoteExpert '{self._expert_name}': HTTP {exc.response.status_code} "
-                f"from {self._endpoint}: {exc.response.text[:200]}",
+                f"from {redact_url(self._endpoint)}: {redact_value(exc.response.text[:200])}",
                 context={
                     "expert": self._expert_name,
-                    "endpoint": self._endpoint,
+                    "endpoint": redact_url(self._endpoint),
                     "status_code": exc.response.status_code,
                 },
             ) from exc
         except httpx.RequestError as exc:
+            emit_security_audit(
+                "remote_call",
+                "failure",
+                expert_name=self._expert_name,
+                endpoint_host=self._endpoint_host(),
+                reason="network_error",
+            )
             raise ExpertError(
-                f"RemoteExpert '{self._expert_name}': network error — {exc}",
-                context={"expert": self._expert_name, "endpoint": self._endpoint},
+                f"RemoteExpert '{self._expert_name}': network error - {exc}",
+                context={"expert": self._expert_name, "endpoint": redact_url(self._endpoint)},
             ) from exc
-
-        # --- Parse response ----------------------------------------------
-        try:
-            data: Any = response.json()
+        except ExpertError:
+            raise
         except Exception as exc:
             raise ExpertError(
-                f"RemoteExpert '{self._expert_name}': response from {self._endpoint} "
+                f"RemoteExpert '{self._expert_name}': response from {redact_url(self._endpoint)} "
                 f"is not valid JSON: {exc}",
-                context={"expert": self._expert_name, "endpoint": self._endpoint},
+                context={"expert": self._expert_name, "endpoint": redact_url(self._endpoint)},
             ) from exc
+
+        emit_security_audit(
+            "remote_call",
+            "success",
+            expert_name=self._expert_name,
+            endpoint_host=self._endpoint_host(),
+        )
 
         return self._parse_response(data, list(inputs.keys()))
 
@@ -571,7 +616,7 @@ class RemoteExpert(ExpertPlugin):
             "modalities": self.declared_modalities(),
             "expert_class": type(self).__qualname__,
             "backend": "remote",
-            "endpoint": self._endpoint,
+            "endpoint": redact_url(self._endpoint),
             "has_request_template": self._request_template is not None,
             "has_response_mapping": self._response_mapping is not None,
             "loaded": self.is_loaded,
@@ -645,8 +690,8 @@ class RemoteExpert(ExpertPlugin):
             raise ExpertError(
                 f"RemoteExpert '{self._expert_name}': cannot extract 'predicted_age' "
                 f"from response using path '{path_hint}': {exc}.  "
-                f"Response (truncated): {json.dumps(data)[:200]}",
-                context={"expert": self._expert_name, "endpoint": self._endpoint},
+                f"Response (truncated): {json.dumps(redact_value(data), default=str)[:200]}",
+                context={"expert": self._expert_name, "endpoint": redact_url(self._endpoint)},
             ) from exc
 
         # --- confidence (optional, default -1.0) -------------------------
@@ -670,7 +715,7 @@ class RemoteExpert(ExpertPlugin):
             metadata = {}  # non-fatal
 
         metadata["backend"] = "remote"
-        metadata["endpoint"] = self._endpoint
+        metadata["endpoint"] = redact_url(self._endpoint)
 
         return ExpertOutput(
             expert_name=self._expert_name,
@@ -679,3 +724,102 @@ class RemoteExpert(ExpertPlugin):
             confidence=confidence,
             metadata=metadata,
         )
+
+    def _validate_endpoint_policy(self) -> None:
+        """Validate the resolved endpoint against configured security policy."""
+        if self._security_config is None:
+            return
+        allowlist = self._security_config.remote_endpoint_allowlist
+        if allowlist is None and self._environment != "production":
+            allowlist = ["*"]
+        if not allowlist:
+            raise ExpertError(
+                f"RemoteExpert '{self._expert_name}': remote endpoint allowlist is empty."
+            )
+        try:
+            validate_remote_url(
+                self._endpoint,
+                allowlist=allowlist,
+                enforce_https=self._security_config.remote_enforce_https,
+                allow_private_networks=self._security_config.remote_allow_private_networks,
+                purpose=f"RemoteExpert '{self._expert_name}' endpoint",
+            )
+        except ExpertError as exc:
+            emit_security_audit(
+                "remote_endpoint_policy",
+                "block",
+                expert_name=self._expert_name,
+                endpoint_host=self._endpoint_host(),
+                reason=str(exc),
+            )
+            raise
+        emit_security_audit(
+            "remote_endpoint_policy",
+            "allow",
+            expert_name=self._expert_name,
+            endpoint_host=self._endpoint_host(),
+        )
+
+    def _effective_response_max_bytes(self) -> int:
+        """Return per-expert or global remote response byte limit."""
+        if self._response_max_bytes is not None:
+            return self._response_max_bytes
+        if self._security_config is not None:
+            return self._security_config.remote_response_max_bytes
+        return 1_048_576
+
+    def _parse_limited_json_response(self, response: Any) -> Any:
+        """Parse a remote JSON response after enforcing content type and byte limit."""
+        content_type = ""
+        headers = getattr(response, "headers", {}) or {}
+        if hasattr(headers, "get"):
+            content_type = headers.get("content-type", "") or headers.get("Content-Type", "")
+        if not isinstance(content_type, str):
+            content_type = ""
+        if content_type and "json" not in content_type.lower():
+            raise ExpertError(
+                f"RemoteExpert '{self._expert_name}': response Content-Type is not JSON: "
+                f"{content_type!r}",
+                context={"expert": self._expert_name, "content_type": content_type},
+            )
+
+        max_bytes = self._effective_response_max_bytes()
+        raw = getattr(response, "content", None)
+        if isinstance(raw, bytes):
+            if len(raw) > max_bytes:
+                emit_security_audit(
+                    "remote_response_limit",
+                    "failure",
+                    expert_name=self._expert_name,
+                    endpoint_host=self._endpoint_host(),
+                    reason="response_too_large",
+                    metadata={"max_bytes": max_bytes, "actual_bytes": len(raw)},
+                )
+                raise ExpertError(
+                    f"RemoteExpert '{self._expert_name}': response exceeded {max_bytes} bytes.",
+                    context={"expert": self._expert_name, "max_bytes": max_bytes},
+                )
+            return json.loads(raw.decode("utf-8"))
+
+        data = response.json()
+        approx_size = len(json.dumps(data, default=str).encode("utf-8"))
+        if approx_size > max_bytes:
+            emit_security_audit(
+                "remote_response_limit",
+                "failure",
+                expert_name=self._expert_name,
+                endpoint_host=self._endpoint_host(),
+                reason="response_too_large",
+                metadata={"max_bytes": max_bytes, "actual_bytes": approx_size},
+            )
+            raise ExpertError(
+                f"RemoteExpert '{self._expert_name}': response exceeded {max_bytes} bytes.",
+                context={"expert": self._expert_name, "max_bytes": max_bytes},
+            )
+        return data
+
+    def _endpoint_host(self) -> str | None:
+        """Return endpoint host for audit records."""
+        from urllib.parse import urlparse
+
+        return urlparse(self._endpoint).hostname

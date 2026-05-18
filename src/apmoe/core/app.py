@@ -43,6 +43,7 @@ from apmoe.core.config import FrameworkConfig, load_config
 from apmoe.core.exceptions import ConfigurationError, ExpertError, ServingError
 from apmoe.core.pipeline import InferencePipeline, ModalityChain
 from apmoe.core.registry import legacy_dotted_import_alias
+from apmoe.core.security import ensure_correlation_id, redact_value
 from apmoe.core.types import Prediction
 from apmoe.experts.registry import ExpertRegistry
 from apmoe.modality.factory import ModalityProcessorFactory
@@ -102,6 +103,7 @@ class APMoEApp:
         self._expert_registry = expert_registry
         self._aggregator = aggregator
         self._config_path: str | None = config_path
+        self.security_audit_hooks: list[Any] = []
 
     # ------------------------------------------------------------------
     # Bootstrap factory
@@ -191,7 +193,12 @@ class APMoEApp:
             )
 
         # 4. Build expert registry (resolves classes, instantiates, loads weights)
-        expert_reg = ExpertRegistry.from_configs(apmoe_cfg.experts, apmoe_cfg.modalities)
+        expert_reg = ExpertRegistry.from_configs(
+            apmoe_cfg.experts,
+            apmoe_cfg.modalities,
+            security_config=apmoe_cfg.security,
+            environment=apmoe_cfg.environment,
+        )
 
         # 5. Resolve aggregation strategy
         try:
@@ -255,6 +262,7 @@ class APMoEApp:
             :class:`~apmoe.core.exceptions.ExpertError`: If an expert raises
                 an unhandled exception during inference.
         """
+        ensure_correlation_id()
         return self._pipeline.run(inputs)
 
     async def predict_async(self, inputs: dict[str, Any]) -> Prediction:
@@ -273,6 +281,7 @@ class APMoEApp:
             :class:`~apmoe.core.exceptions.PipelineError`: If no experts can run.
             :class:`~apmoe.core.exceptions.ExpertError`: If an expert raises.
         """
+        ensure_correlation_id()
         return await self._pipeline.run_async(inputs)
 
     # ------------------------------------------------------------------
@@ -478,7 +487,9 @@ class APMoEApp:
             ],
             "modalities": [m.name for m in self._config.apmoe.modalities],
             "aggregator": self._aggregator.get_info(),
-            "serving": self._config.apmoe.serving.model_dump(),
+            "serving": redact_value(self._config.apmoe.serving.model_dump()),
+            "environment": self._config.apmoe.environment,
+            "security": redact_value(self._config.apmoe.security.model_dump()),
             "confidence_threshold": self._config.apmoe.confidence_threshold,
         }
 

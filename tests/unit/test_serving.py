@@ -123,6 +123,9 @@ def _make_app(
         rate_limit_store=rate_limit_store,
         rate_limit_redis_url=rate_limit_redis_url,
     )
+    mock.config.apmoe.security.audit_enabled = True
+    mock.config.apmoe.security.audit_success_events = True
+    mock.security_audit_hooks = []
     mock.expert_registry.health_check.return_value = (
         expert_health if expert_health is not None else {"test_expert": True}
     )
@@ -409,6 +412,15 @@ class TestRequestLoggingMiddleware:
             json={"keystroke": [[8, 0, 95.0]]},
         )
         assert "x-correlation-id" in response.headers
+
+    def test_valid_inbound_correlation_id_is_reused(self, client: TestClient) -> None:
+        response = client.get("/health", headers={"X-Correlation-ID": "trace-123"})
+        assert response.headers["x-correlation-id"] == "trace-123"
+
+    def test_invalid_inbound_correlation_id_is_replaced(self, client: TestClient) -> None:
+        response = client.get("/health", headers={"X-Correlation-ID": "bad\ntrace"})
+        assert response.headers["x-correlation-id"] != "bad\ntrace"
+        assert len(response.headers["x-correlation-id"]) == 36
 
 
 # ---------------------------------------------------------------------------
@@ -816,6 +828,40 @@ class TestStatelessSecurityMiddleware:
             headers={"Authorization": "Bearer unrelated"},
         )
         assert response.status_code == 200
+
+    def test_custom_audit_hook_receives_authz_denial_event(self) -> None:
+        events: list[Any] = []
+        app = _make_app(authentication_enabled=True, authorization_enabled=True)
+        app.security_audit_hooks = [events.append]
+        c = TestClient(
+            create_api(app, security_provider=_BearerScopeProvider()),
+            raise_server_exceptions=False,
+        )
+        response = c.post(
+            "/predict",
+            json={"keystroke": [[8, 0, 95.0]]},
+            headers={"Authorization": "Bearer info:read"},
+        )
+        assert response.status_code == 403
+        assert any(
+            event.event_type == "authorization"
+            and event.outcome == "failure"
+            and event.reason == "insufficient_scope"
+            for event in events
+        )
+
+    def test_audit_disabled_suppresses_serving_audit_events(self) -> None:
+        events: list[Any] = []
+        app = _make_app(authentication_enabled=True, authorization_enabled=True)
+        app.config.apmoe.security.audit_enabled = False
+        app.security_audit_hooks = [events.append]
+        c = TestClient(
+            create_api(app, security_provider=_BearerScopeProvider()),
+            raise_server_exceptions=False,
+        )
+        response = c.post("/predict", json={"keystroke": [[8, 0, 95.0]]})
+        assert response.status_code == 401
+        assert events == []
 
 
 class TestInMemoryTokenInvalidationStore:

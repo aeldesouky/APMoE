@@ -29,7 +29,8 @@ sections — `modalities`, `experts`, `aggregation`, and `serving`:
 ```
 
 `modalities`, `experts`, and `aggregation` are **required**.  
-`serving` is **optional** — all its fields have defaults.
+`serving`, `environment`, and `security` are **optional** — all their fields
+have defaults.
 
 ---
 
@@ -97,6 +98,47 @@ Expert names must be **unique** across the list.
 | `weights` | string | ✅ | Filesystem path to the pretrained weight file (`.pt`, `.onnx`, etc.). Resolved relative to the current working directory. |
 | `modalities` | array of strings | ✅ | One or more modality names this expert consumes. Every name must appear in `modalities[].name`. An expert may consume a single modality **or** multiple (multi-modal expert). Must not be empty. |
 | *(any extra key)* | any | ❌ | Additional expert-specific parameters (e.g. `"threshold"`, `"temperature"`) are collected into an `extra` dict and passed to the expert at bootstrap. |
+
+### Model artifact integrity
+
+Local experts may pin a SHA-256 digest for the configured `weights` file:
+
+```json
+{
+  "name": "face_age_expert",
+  "class": "apmoe.experts.builtin.CNNAgeExpert",
+  "weights": "./weights/visual_age_expert.pt",
+  "modalities": ["visual"],
+  "integrity": {
+    "sha256": "64-character-hex-digest"
+  }
+}
+```
+
+Remote experts should not rely on a hash returned by the remote model service.
+Instead, configure an RSA-PSS-SHA256 signed manifest fetched from an allowed
+endpoint and verified with a pinned public key:
+
+```json
+{
+  "name": "remote_age_expert",
+  "class": "apmoe.experts.remote.RemoteExpert",
+  "endpoint": "https://models.example.com/predict",
+  "modalities": ["keystroke"],
+  "integrity": {
+    "manifest_url": "https://models.example.com/.well-known/apmoe-manifest.json",
+    "manifest_public_key": "$APMOE_REMOTE_MANIFEST_PUBLIC_KEY",
+    "manifest_required": true,
+    "signature_algorithm": "RSA-PSS-SHA256"
+  }
+}
+```
+
+The manifest signature covers canonical JSON excluding the `signature` field
+and must include `expert_name`, `model_id`, `model_version`, `endpoint_origin`,
+`model_digest` or `artifact_digest`, `issued_at`, `expires_at`, and `signature`.
+Keep the private signing key outside the remote model runtime, ideally in
+release CI or a KMS-backed signing process.
 
 ### Single-modality expert
 
@@ -219,6 +261,51 @@ omitted; all fields have defaults.
 
 ---
 
+## `environment` and `security`
+
+`apmoe.environment` defaults to `"development"` and may be one of
+`"development"`, `"test"`, `"staging"`, or `"production"`. `APMOE_ENV`
+overrides it at load time.
+
+For the full operational security reference, including authn/authz, shared
+stores, remote endpoint policy, signed manifests, audit events, redaction, and
+the production checklist, see [security.md](security.md).
+
+`apmoe.security` controls framework-level hardening:
+
+```json
+{
+  "environment": "production",
+  "security": {
+    "remote_endpoint_allowlist": ["models.example.com", "*.trusted.ai"],
+    "remote_enforce_https": true,
+    "remote_allow_private_networks": false,
+    "remote_response_max_bytes": 1048576,
+    "audit_enabled": true,
+    "audit_success_events": true
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `remote_endpoint_allowlist` | array of strings \| null | `null` | Hostname allowlist for remote expert endpoints and manifest URLs. Exact hosts and wildcard suffixes like `"*.example.com"` are supported. Non-production treats missing allowlist as `["*"]`; production remote experts require an explicit non-wildcard allowlist. |
+| `remote_enforce_https` | boolean | `true` | Reject HTTP remote endpoints unless private networks are explicitly allowed. |
+| `remote_allow_private_networks` | boolean | `false` | Reject localhost, loopback, private, link-local, reserved, multicast, and metadata IP hosts unless set to `true`. |
+| `remote_response_max_bytes` | integer | `1048576` | Maximum remote response or manifest bytes accepted before JSON parsing. |
+| `audit_enabled` | boolean | `true` | Enables structured security audit events. |
+| `audit_success_events` | boolean | `true` | Emits successful authn/authz events as well as denials/blocks. |
+
+Production fail-closed rule: if any expert has an `endpoint`, production config
+must provide a concrete `remote_endpoint_allowlist`; missing, empty, or `["*"]`
+is rejected at config load.
+
+Remote response protection rejects responses above the configured cap and
+obvious non-JSON content types before parsing. Per-expert
+`endpoint_response_max_bytes` overrides the global cap.
+
+---
+
 ## Environment variable overrides
 
 These variables override the corresponding `serving` fields **after** the JSON
@@ -240,6 +327,7 @@ file is loaded. They take precedence over anything in the file.
 | `APMOE_SERVING_TOKEN_INVALIDATION_STORE` | `serving.token_invalidation_store` | string | `APMOE_SERVING_TOKEN_INVALIDATION_STORE=redis` |
 | `APMOE_SERVING_TOKEN_INVALIDATION_REDIS_URL` | `serving.token_invalidation_redis_url` | string | `APMOE_SERVING_TOKEN_INVALIDATION_REDIS_URL=redis://localhost:6379/0` |
 | `APMOE_SERVING_TOKEN_INVALIDATION_KEY_PREFIX` | `serving.token_invalidation_key_prefix` | string | `APMOE_SERVING_TOKEN_INVALIDATION_KEY_PREFIX=apmoe:jwt:invalid:` |
+| `APMOE_ENV` | `environment` | string | `APMOE_ENV=production` |
 
 If a variable is set but cannot be cast to the target type (e.g. `APMOE_SERVING_PORT=abc`),
 `load_config()` raises a `ConfigurationError` immediately.

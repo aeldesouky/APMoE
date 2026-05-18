@@ -9,6 +9,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from apmoe.core.exceptions import ExpertError
+from apmoe.core.config import SecurityConfig
+from apmoe.core.security import host_matches_allowlist
 from apmoe.core.types import EmbeddingResult, ExpertOutput, ModalityData
 from apmoe.experts.remote import (
     RemoteExpert,
@@ -249,6 +251,7 @@ def _mock_response(payload: Any) -> MagicMock:
     resp = MagicMock()
     resp.raise_for_status = MagicMock()
     resp.json = MagicMock(return_value=payload)
+    resp.headers = {"content-type": "application/json"}
     return resp
 
 
@@ -400,3 +403,70 @@ class TestRemoteExpertPredict:
 
         sent_headers = mock_post.call_args.kwargs.get("headers", {})
         assert sent_headers.get("Authorization") == "Bearer tok123"
+
+    def test_response_over_limit_raises(self) -> None:
+        expert = _loaded_expert(endpoint_response_max_bytes=10)
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.headers = {"content-type": "application/json"}
+        resp.content = b'{"predicted_age": 25, "extra": "too-large"}'
+        with patch("httpx.post", return_value=resp):
+            with pytest.raises(ExpertError, match="response exceeded"):
+                expert.predict({"keystroke": self._keystroke_input()})
+
+    def test_non_json_content_type_raises(self) -> None:
+        expert = _loaded_expert()
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.headers = {"content-type": "text/html"}
+        resp.content = b"<html></html>"
+        with patch("httpx.post", return_value=resp):
+            with pytest.raises(ExpertError, match="Content-Type"):
+                expert.predict({"keystroke": self._keystroke_input()})
+
+
+class TestRemoteEndpointPolicy:
+    def test_allowlist_exact_host_allows_https_endpoint(self) -> None:
+        expert = _make_expert(
+            endpoint="https://models.example.com/predict",
+            security_config=SecurityConfig(remote_endpoint_allowlist=["models.example.com"]),
+        )
+        expert.load_weights("")
+        assert expert.is_loaded is True
+
+    def test_allowlist_wildcard_matches_subdomain(self) -> None:
+        assert host_matches_allowlist("api.example.com", ["*.example.com"]) is True
+
+    def test_disallowed_host_raises(self) -> None:
+        expert = _make_expert(
+            endpoint="https://evil.example.net/predict",
+            security_config=SecurityConfig(remote_endpoint_allowlist=["models.example.com"]),
+        )
+        with pytest.raises(ExpertError, match="allowlist"):
+            expert.load_weights("")
+
+    def test_http_endpoint_rejected_when_https_enforced(self) -> None:
+        expert = _make_expert(
+            endpoint="http://models.example.com/predict",
+            security_config=SecurityConfig(remote_endpoint_allowlist=["models.example.com"]),
+        )
+        with pytest.raises(ExpertError, match="HTTPS"):
+            expert.load_weights("")
+
+    def test_loopback_rejected_unless_private_networks_allowed(self) -> None:
+        blocked = _make_expert(
+            endpoint="http://127.0.0.1:8000/predict",
+            security_config=SecurityConfig(remote_endpoint_allowlist=["*"]),
+        )
+        with pytest.raises(ExpertError, match="HTTPS"):
+            blocked.load_weights("")
+
+        allowed = _make_expert(
+            endpoint="http://127.0.0.1:8000/predict",
+            security_config=SecurityConfig(
+                remote_endpoint_allowlist=["*"],
+                remote_allow_private_networks=True,
+            ),
+        )
+        allowed.load_weights("")
+        assert allowed.is_loaded is True

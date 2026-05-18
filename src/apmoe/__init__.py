@@ -46,9 +46,11 @@ from apmoe.core.config import (
     AggregationConfig,
     APMoEConfig,
     ExpertConfig,
+    ExpertIntegrityConfig,
     FrameworkConfig,
     ModalityConfig,
     PipelineConfig,
+    SecurityConfig,
     ServingConfig,
     load_config,
 )
@@ -62,6 +64,16 @@ from apmoe.core.exceptions import (
     ServingError,
 )
 from apmoe.core.registry import Registry
+from apmoe.core.security import (
+    LoggingSecurityAuditSink,
+    SecurityAuditEvent,
+    SecurityAuditSink,
+    ensure_correlation_id,
+    get_correlation_id,
+    host_matches_allowlist,
+    redact_url,
+    redact_value,
+)
 from apmoe.core.types import (
     EmbeddingResult,
     ExpertOutput,
@@ -103,6 +115,7 @@ __all__ = [
     "EmbeddingResult",
     "ExpertConfig",
     "ExpertError",
+    "ExpertIntegrityConfig",
     "ExpertOutput",
     # Expert layer
     "ExpertPlugin",
@@ -124,6 +137,9 @@ __all__ = [
     # Generic registry
     "Registry",
     "RegistryError",
+    "SecurityAuditEvent",
+    "SecurityAuditSink",
+    "SecurityConfig",
     "ServingConfig",
     "ServingError",
     # Version
@@ -133,6 +149,12 @@ __all__ = [
     "cleaner_registry",
     "embedder_registry",
     "expert_registry",
+    "ensure_correlation_id",
+    "get_correlation_id",
+    "host_matches_allowlist",
     "load_config",
+    "LoggingSecurityAuditSink",
     "modality_registry",
+    "redact_url",
+    "redact_value",
 ]
