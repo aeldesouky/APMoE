@@ -122,7 +122,7 @@ class LMStudioExpert(RemoteExpert):
 
 
 def main() -> None:
-    image_path = _PROJECT_ROOT / "kmelsayed.jpg"
+    image_path = _PROJECT_ROOT / "drkmelsayed.jpg"
     config_path = _PROJECT_ROOT / "configs" / "llm_remote.json"
 
     if not image_path.exists():
@@ -158,7 +158,7 @@ def main() -> None:
 
     try:
         print("─" * 60)
-        print("  APMoE × Local LLM (Gemma 4) — Age Estimation Test")
+        print("  APMoE with Local LLM (Gemma 4) — Age Estimation Test")
         print("─" * 60)
         print(f"  Image  : {image_path.name}")
         print(f"  Config : {config_path.name}")
@@ -176,7 +176,7 @@ def main() -> None:
         result = app.predict({"image": image_bytes})
 
         print("─" * 60)
-        print(f"  ✅  Predicted age : {result.predicted_age:.0f} years")
+        print(f"  Predicted age : {result.predicted_age:.0f} years")
         print(f"  Confidence       : {result.confidence} (n/a — LLM regressor)")
         print(f"  Expert           : {result.per_expert_outputs[0].expert_name}")
         print()
