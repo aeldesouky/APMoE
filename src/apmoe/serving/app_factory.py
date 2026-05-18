@@ -37,11 +37,24 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 import apmoe
+from apmoe.core.exceptions import ServingError
 from apmoe.serving.middleware import (
+    AuthenticationMiddleware,
     AuthMiddleware,
     AuthPlugin,
+    AuthorizationMiddleware,
+    AuthorizationPolicy,
+    InMemoryRateLimitStore,
+    InMemoryTokenInvalidationStore,
+    JWTBearerAuthProvider,
     RateLimitMiddleware,
+    RateLimitStore,
     RequestLoggingMiddleware,
+    RedisRateLimitStore,
+    RedisTokenInvalidationStore,
+    ScopeAuthorizationPolicy,
+    StatelessAuthProvider,
+    TokenInvalidationStore,
 )
 from apmoe.serving.openapi_schemas import OPENAPI_DESCRIPTION, OPENAPI_TAGS
 from apmoe.serving.routes import create_router
@@ -66,6 +79,11 @@ def create_api(
     *,
     auth_plugin: AuthPlugin | None = None,
     auth_exclude_paths: frozenset[str] | None = None,
+    security_provider: StatelessAuthProvider | None = None,
+    authorization_policy: AuthorizationPolicy | None = None,
+    invalidation_store: TokenInvalidationStore | None = None,
+    rate_limit_store: RateLimitStore | None = None,
+    security_exclude_paths: frozenset[str] | None = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application for the APMoE serving layer.
 
@@ -110,6 +128,39 @@ def create_api(
         parent_app.mount("/apmoe", api)
     """
     serving_cfg = app.config.apmoe.serving
+    authentication_enabled = bool(getattr(serving_cfg, "authentication_enabled", False))
+    authorization_enabled = bool(getattr(serving_cfg, "authorization_enabled", False))
+
+    if auth_plugin is not None and (
+        security_provider is not None or authorization_policy is not None
+    ):
+        raise ServingError(
+            "Configure either legacy auth_plugin or the new stateless security "
+            "provider/policy, not both.",
+            context={
+                "auth_plugin": True,
+                "security_provider": security_provider is not None,
+                "authorization_policy": authorization_policy is not None,
+            },
+        )
+
+    if auth_plugin is None and authentication_enabled and security_provider is None:
+        raise ServingError(
+            "Authentication is enabled but no security_provider was supplied. "
+            "Pass a StatelessAuthProvider to create_api() or set "
+            "serving.authentication_enabled=false for local/demo deployments.",
+            context={"authentication_enabled": authentication_enabled},
+        )
+
+    if auth_plugin is None and authorization_enabled and not authentication_enabled:
+        raise ServingError(
+            "Authorization is enabled but authentication is disabled. Disable "
+            "authorization as well, or enable authentication with a security_provider.",
+            context={
+                "authentication_enabled": authentication_enabled,
+                "authorization_enabled": authorization_enabled,
+            },
+        )
 
     api = FastAPI(
         title="APMoE — Age Prediction using Mixture of Experts",
@@ -139,15 +190,44 @@ def create_api(
         api.add_middleware(
             RateLimitMiddleware,
             max_requests_per_minute=serving_cfg.rate_limit,
+            store=rate_limit_store or _build_rate_limit_store(serving_cfg),
         )
 
-    # 4. Developer-provided authentication hook — only attached when supplied.
+    # 4. Developer-provided legacy authentication hook.  It is mutually
+    # exclusive with the new stateless authn/authz middlewares.
     if auth_plugin is not None:
         api.add_middleware(
             AuthMiddleware,
             auth_plugin=auth_plugin,
             exclude_paths=auth_exclude_paths,
         )
+    else:
+        _token_store = invalidation_store or _build_token_invalidation_store(serving_cfg)
+        api.state.token_invalidation_store = _token_store
+        if isinstance(security_provider, JWTBearerAuthProvider):
+            security_provider.set_invalidation_store(
+                _token_store,
+                override=invalidation_store is not None,
+            )
+
+        # Starlette wraps middleware in reverse registration order.  Register
+        # authorization first so authentication runs before it on requests.
+        if authorization_enabled:
+            api.add_middleware(
+                AuthorizationMiddleware,
+                authorization_policy=authorization_policy or ScopeAuthorizationPolicy(),
+                exclude_paths=security_exclude_paths,
+            )
+
+        if authentication_enabled:
+            # The store is exposed at create_api's boundary so callers can pass
+            # the same object into JWTBearerAuthProvider for invalidation.
+            assert security_provider is not None
+            api.add_middleware(
+                AuthenticationMiddleware,
+                auth_provider=security_provider,
+                exclude_paths=security_exclude_paths,
+            )
 
     # Catch-all handler for any exception that escapes the route layer.
     # FastAPI would otherwise return a bare 500 with no console output.
@@ -183,6 +263,28 @@ def create_api(
     api.include_router(legacy_router)
 
     return api
+
+
+def _build_token_invalidation_store(serving_cfg: Any) -> TokenInvalidationStore:
+    """Build the configured token invalidation store."""
+    backend = getattr(serving_cfg, "token_invalidation_store", "memory")
+    if backend == "redis":
+        return RedisTokenInvalidationStore(
+            serving_cfg.token_invalidation_redis_url,
+            key_prefix=serving_cfg.token_invalidation_key_prefix,
+        )
+    return InMemoryTokenInvalidationStore()
+
+
+def _build_rate_limit_store(serving_cfg: Any) -> RateLimitStore:
+    """Build the configured rate-limit store."""
+    backend = getattr(serving_cfg, "rate_limit_store", "memory")
+    if backend == "redis":
+        return RedisRateLimitStore(
+            serving_cfg.rate_limit_redis_url,
+            key_prefix=serving_cfg.rate_limit_key_prefix,
+        )
+    return InMemoryRateLimitStore()
 
 
 def create_worker_app() -> FastAPI:

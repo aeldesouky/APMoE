@@ -24,6 +24,12 @@ Environment variable override examples::
     APMOE_SERVING_PORT=9000
     APMOE_SERVING_WORKERS=8
     APMOE_SERVING_CORS_ORIGINS=http://localhost:3000,https://myapp.com
+    APMOE_SERVING_TOKEN_INVALIDATION_STORE=redis
+    APMOE_SERVING_TOKEN_INVALIDATION_REDIS_URL=redis://localhost:6379/0
+    APMOE_SERVING_RATE_LIMIT_STORE=redis
+    APMOE_SERVING_RATE_LIMIT_REDIS_URL=redis://localhost:6379/0
+    APMOE_SERVING_AUTHENTICATION_ENABLED=true
+    APMOE_SERVING_AUTHORIZATION_ENABLED=true
 """
 
 from __future__ import annotations
@@ -223,6 +229,10 @@ class ServingConfig(BaseModel):
             disables rate limiting).
         log_level: Uvicorn log level (``"debug"``, ``"info"``, ``"warning"``,
             ``"error"``, ``"critical"``).
+        authentication_enabled: Whether the stateless authentication
+            middleware is enabled. Defaults to fail-closed ``True``.
+        authorization_enabled: Whether the authorization middleware is enabled.
+            Defaults to fail-closed ``True``.
     """
 
     host: str = "0.0.0.0"
@@ -231,6 +241,14 @@ class ServingConfig(BaseModel):
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
     rate_limit: int | None = None
     log_level: str = "info"
+    authentication_enabled: bool = True
+    authorization_enabled: bool = True
+    token_invalidation_store: str = "memory"
+    token_invalidation_redis_url: str | None = None
+    token_invalidation_key_prefix: str = "apmoe:jwt:invalid:"
+    rate_limit_store: str = "memory"
+    rate_limit_redis_url: str | None = None
+    rate_limit_key_prefix: str = "apmoe:rate:"
 
     @field_validator("port")
     @classmethod
@@ -247,6 +265,32 @@ class ServingConfig(BaseModel):
         if v < 1:
             raise ValueError(f"Workers must be ≥ 1, got {v}.")
         return v
+
+    @field_validator("token_invalidation_store", "rate_limit_store")
+    @classmethod
+    def store_backend_must_be_supported(cls, v: str) -> str:
+        """Validate shared-store backend names."""
+        normalised = v.strip().lower()
+        if normalised not in {"memory", "redis"}:
+            raise ValueError(
+                f"Store backend must be one of 'memory' or 'redis', got {v!r}."
+            )
+        return normalised
+
+    @model_validator(mode="after")
+    def validate_shared_store_urls(self) -> "ServingConfig":
+        """Require Redis URLs when Redis-backed stores are selected."""
+        if self.token_invalidation_store == "redis" and not self.token_invalidation_redis_url:
+            raise ValueError(
+                "serving.token_invalidation_redis_url is required when "
+                "serving.token_invalidation_store='redis'."
+            )
+        if self.rate_limit_store == "redis" and not self.rate_limit_redis_url:
+            raise ValueError(
+                "serving.rate_limit_redis_url is required when "
+                "serving.rate_limit_store='redis'."
+            )
+        return self
 
 
 class APMoEConfig(BaseModel):
@@ -339,7 +383,42 @@ _SERVING_ENV_MAP: dict[str, tuple[str, type[Any]]] = {
     "APMOE_SERVING_WORKERS": ("workers", int),
     "APMOE_SERVING_LOG_LEVEL": ("log_level", str),
     "APMOE_SERVING_RATE_LIMIT": ("rate_limit", int),
+    "APMOE_SERVING_TOKEN_INVALIDATION_STORE": ("token_invalidation_store", str),
+    "APMOE_SERVING_TOKEN_INVALIDATION_REDIS_URL": (
+        "token_invalidation_redis_url",
+        str,
+    ),
+    "APMOE_SERVING_TOKEN_INVALIDATION_KEY_PREFIX": (
+        "token_invalidation_key_prefix",
+        str,
+    ),
+    "APMOE_SERVING_RATE_LIMIT_STORE": ("rate_limit_store", str),
+    "APMOE_SERVING_RATE_LIMIT_REDIS_URL": ("rate_limit_redis_url", str),
+    "APMOE_SERVING_RATE_LIMIT_KEY_PREFIX": ("rate_limit_key_prefix", str),
 }
+
+_SERVING_BOOL_ENV_MAP: dict[str, str] = {
+    "APMOE_SERVING_AUTHENTICATION_ENABLED": "authentication_enabled",
+    "APMOE_SERVING_AUTHORIZATION_ENABLED": "authorization_enabled",
+}
+
+
+def _parse_bool_env(env_key: str, raw: str) -> bool:
+    """Parse a boolean environment variable value.
+
+    Accepts common deployment spellings so Docker, shell, and CI users do not
+    have to remember one exact representation.
+    """
+    normalised = raw.strip().lower()
+    if normalised in {"true", "1", "yes", "on"}:
+        return True
+    if normalised in {"false", "0", "no", "off"}:
+        return False
+    raise ConfigurationError(
+        f"Environment variable {env_key}={raw!r} cannot be cast to bool. "
+        "Use one of: true/false, 1/0, yes/no, on/off.",
+        context={"env_key": env_key, "raw_value": raw},
+    )
 
 
 def _apply_env_overrides(data: dict[str, Any]) -> None:
@@ -365,6 +444,11 @@ def _apply_env_overrides(data: dict[str, Any]) -> None:
                 f"Environment variable {env_key}={raw!r} cannot be cast to {cast.__name__}.",
                 context={"env_key": env_key, "raw_value": raw},
             ) from exc
+
+    for env_key, field_name in _SERVING_BOOL_ENV_MAP.items():
+        raw = os.environ.get(env_key)
+        if raw is not None:
+            serving_section[field_name] = _parse_bool_env(env_key, raw)
 
     # APMOE_SERVING_CORS_ORIGINS — comma-separated list
     cors_raw = os.environ.get("APMOE_SERVING_CORS_ORIGINS")

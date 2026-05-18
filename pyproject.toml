@@ -36,6 +36,12 @@ dependencies = [
 remote = [
     "httpx>=0.27",           # Alias for pip install apmoe[remote]
 ]
+security = [
+    "PyJWT[crypto]>=2.8",    # Required by JWTBearerAuthProvider
+]
+redis = [
+    "redis>=5.0",            # Required by Redis-backed invalidation/rate-limit stores
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",

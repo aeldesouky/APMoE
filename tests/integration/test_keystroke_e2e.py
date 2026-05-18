@@ -161,6 +161,8 @@ def keystroke_client() -> TestClient:  # type: ignore[return]
     os.chdir(PROJECT_ROOT)
     try:
         app = APMoEApp.from_config(CONFIG_PATH)
+        app.config.apmoe.serving.authentication_enabled = False
+        app.config.apmoe.serving.authorization_enabled = False
         api = create_api(app)
         with TestClient(api, raise_server_exceptions=True) as client:
             yield client

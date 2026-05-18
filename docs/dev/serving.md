@@ -66,7 +66,12 @@ Returns `APMoEApp.get_info()` output:
 1. `CORSMiddleware`
 2. `RequestLoggingMiddleware`
 3. `RateLimitMiddleware` (only when `serving.rate_limit` is set)
-4. `AuthMiddleware` (only when `auth_plugin` is provided)
+4. `AuthenticationMiddleware` (when `serving.authentication_enabled` is true)
+5. `AuthorizationMiddleware` (when `serving.authorization_enabled` is true)
+
+The legacy `AuthMiddleware` still runs when `create_api(auth_plugin=...)` is
+used, but it is mutually exclusive with the newer stateless authn/authz
+middlewares.
 
 This order is important so preflight/CORS handling occurs before auth/rate
 checks.
@@ -93,13 +98,117 @@ Use this header for cross-service request tracing.
 - on overflow: `429` with `Retry-After: 60`
 
 Important deployment note:
-- This limiter is in-memory and process-local.
-- With multiple workers, effective total limit is multiplied by worker count.
-- For strict global limits, place a shared limiter (for example Redis) in front.
+- `serving.rate_limit_store="memory"` is process-local. With multiple workers,
+  effective total limit is multiplied by worker count.
+- `serving.rate_limit_store="redis"` uses Redis as the shared sliding-window
+  store across workers and nodes. Install it with `pip install apmoe[redis]`.
+- For strict global limits across heterogeneous services, Redis or an API
+  gateway in front of APMoE is recommended.
+
+```json
+{
+  "serving": {
+    "rate_limit": 120,
+    "rate_limit_store": "redis",
+    "rate_limit_redis_url": "redis://localhost:6379/0"
+  }
+}
+```
 
 ---
 
-## Authentication plugin
+## Stateless authentication and authorization
+
+The new serving security layer is enabled by default:
+
+```json
+{
+  "serving": {
+    "authentication_enabled": true,
+    "authorization_enabled": true
+  }
+}
+```
+
+When authentication is enabled, `create_api(...)` fails closed unless a
+`StatelessAuthProvider` is supplied. For local demos only, disable both layers:
+
+```json
+{
+  "serving": {
+    "authentication_enabled": false,
+    "authorization_enabled": false
+  }
+}
+```
+
+Default route scopes:
+
+| Route | Required scope |
+|---|---|
+| `POST /v1/predict`, `POST /predict` | `predict` |
+| `GET /v1/info`, `GET /info` | `info:read` |
+| `GET /v1/health`, `GET /health` | public |
+
+JWT Bearer setup:
+
+```python
+from apmoe.core.app import APMoEApp
+from apmoe.serving.app_factory import create_api
+from apmoe.serving.middleware import JWTBearerAuthProvider
+
+apmoe_app = APMoEApp.from_config("config.json")
+provider = JWTBearerAuthProvider(
+    signing_key="replace-with-secret-or-public-key",
+    algorithms=["HS256"],
+    issuer="https://issuer.example.com",
+    audience="apmoe-api",
+)
+api = create_api(apmoe_app, security_provider=provider)
+```
+
+JWTs must include:
+- `sub`: subject/principal id
+- `jti`: stable token id used for invalidation
+- `exp`: expiry timestamp
+- `scope` or `scopes`: permission strings
+
+Invalidation uses `TokenInvalidationStore`. The default
+`InMemoryTokenInvalidationStore` is process-local and appropriate only for
+single-process/local use. In horizontally scaled deployments, select Redis in
+serving config:
+
+```json
+{
+  "serving": {
+    "token_invalidation_store": "redis",
+    "token_invalidation_redis_url": "redis://localhost:6379/0"
+  }
+}
+```
+
+Install Redis support with `pip install apmoe[redis]`. You can also inject any
+external implementation through `create_api(..., invalidation_store=...)`:
+
+```python
+class RedisTokenInvalidationStore(TokenInvalidationStore):
+    def __init__(self, redis_client) -> None:
+        self._redis = redis_client
+
+    def is_invalid(self, token_id: str) -> bool:
+        return self._redis.exists(f"apmoe:revoked:{token_id}") == 1
+
+    def invalidate(self, token_id: str, expires_at: datetime) -> None:
+        ttl = max(0, int((expires_at - datetime.now(UTC)).total_seconds()))
+        self._redis.setex(f"apmoe:revoked:{token_id}", ttl, "1")
+```
+
+Pass the same store to `JWTBearerAuthProvider` when constructing the provider.
+Redis is optional and not imported unless a Redis store is selected.
+
+---
+
+## Legacy authentication plugin
 
 Authentication is opt-in via `create_api(auth_plugin=...)`.
 

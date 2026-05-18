@@ -180,6 +180,42 @@ class TestParsedValues:
         assert serving.host == "0.0.0.0"
         assert serving.port == 8000
         assert serving.workers == 4
+        assert serving.authentication_enabled is True
+        assert serving.authorization_enabled is True
+        assert serving.token_invalidation_store == "memory"
+        assert serving.rate_limit_store == "memory"
+
+    def test_redis_store_config_parses(self, tmp_path: Path) -> None:
+        data = _base_config()
+        data["apmoe"]["serving"] = {
+            "token_invalidation_store": "redis",
+            "token_invalidation_redis_url": "redis://localhost:6379/1",
+            "rate_limit_store": "redis",
+            "rate_limit_redis_url": "redis://localhost:6379/2",
+        }
+        cfg = load_config(_write_config(tmp_path / "c.json", data))
+        assert cfg.apmoe.serving.token_invalidation_store == "redis"
+        assert cfg.apmoe.serving.token_invalidation_redis_url == "redis://localhost:6379/1"
+        assert cfg.apmoe.serving.rate_limit_store == "redis"
+        assert cfg.apmoe.serving.rate_limit_redis_url == "redis://localhost:6379/2"
+
+    def test_redis_token_store_requires_url(self, tmp_path: Path) -> None:
+        data = _base_config()
+        data["apmoe"]["serving"] = {"token_invalidation_store": "redis"}
+        with pytest.raises(ConfigurationError, match="token_invalidation_redis_url"):
+            load_config(_write_config(tmp_path / "c.json", data))
+
+    def test_redis_rate_limit_store_requires_url(self, tmp_path: Path) -> None:
+        data = _base_config()
+        data["apmoe"]["serving"] = {"rate_limit_store": "redis"}
+        with pytest.raises(ConfigurationError, match="rate_limit_redis_url"):
+            load_config(_write_config(tmp_path / "c.json", data))
+
+    def test_unknown_shared_store_backend_raises(self, tmp_path: Path) -> None:
+        data = _base_config()
+        data["apmoe"]["serving"] = {"rate_limit_store": "postgres"}
+        with pytest.raises(ConfigurationError, match="Store backend"):
+            load_config(_write_config(tmp_path / "c.json", data))
 
     def test_full_config_multi_modality(self, full_config_file: Path) -> None:
         cfg = load_config(full_config_file)
@@ -246,4 +282,41 @@ class TestEnvVarOverrides:
     ) -> None:
         monkeypatch.setenv("APMOE_SERVING_PORT", "99999")
         with pytest.raises(ConfigurationError):
+            load_config(minimal_config_file)
+
+    def test_authentication_enabled_override(
+        self, minimal_config_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("APMOE_SERVING_AUTHENTICATION_ENABLED", "off")
+        cfg = load_config(minimal_config_file)
+        assert cfg.apmoe.serving.authentication_enabled is False
+
+    def test_authorization_enabled_override(
+        self, minimal_config_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("APMOE_SERVING_AUTHORIZATION_ENABLED", "0")
+        cfg = load_config(minimal_config_file)
+        assert cfg.apmoe.serving.authorization_enabled is False
+
+    def test_shared_store_env_overrides(
+        self, minimal_config_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("APMOE_SERVING_TOKEN_INVALIDATION_STORE", "redis")
+        monkeypatch.setenv(
+            "APMOE_SERVING_TOKEN_INVALIDATION_REDIS_URL",
+            "redis://localhost:6379/3",
+        )
+        monkeypatch.setenv("APMOE_SERVING_RATE_LIMIT_STORE", "redis")
+        monkeypatch.setenv("APMOE_SERVING_RATE_LIMIT_REDIS_URL", "redis://localhost:6379/4")
+        cfg = load_config(minimal_config_file)
+        assert cfg.apmoe.serving.token_invalidation_store == "redis"
+        assert cfg.apmoe.serving.token_invalidation_redis_url == "redis://localhost:6379/3"
+        assert cfg.apmoe.serving.rate_limit_store == "redis"
+        assert cfg.apmoe.serving.rate_limit_redis_url == "redis://localhost:6379/4"
+
+    def test_invalid_bool_env_var_raises(
+        self, minimal_config_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("APMOE_SERVING_AUTHENTICATION_ENABLED", "maybe")
+        with pytest.raises(ConfigurationError, match="cannot be cast to bool"):
             load_config(minimal_config_file)

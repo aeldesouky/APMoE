@@ -47,6 +47,7 @@ ENV/
 coverage.xml
 htmlcov/
 .pytest_cache/
+.pytest-tmp*/
 .tox/
 nosetests.xml
 test-results/

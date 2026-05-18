@@ -188,7 +188,15 @@ omitted; all fields have defaults.
   "workers":      4,
   "cors_origins": ["*"],
   "rate_limit":   null,
-  "log_level":    "info"
+  "rate_limit_store": "memory",
+  "rate_limit_redis_url": null,
+  "rate_limit_key_prefix": "apmoe:rate:",
+  "log_level":    "info",
+  "authentication_enabled": true,
+  "authorization_enabled": true,
+  "token_invalidation_store": "memory",
+  "token_invalidation_redis_url": null,
+  "token_invalidation_key_prefix": "apmoe:jwt:invalid:"
 }
 ```
 
@@ -200,6 +208,14 @@ omitted; all fields have defaults.
 | `cors_origins` | array of strings | `["*"]` | — | Allowed CORS origin patterns. Use `["*"]` to permit all origins, or list explicit origins like `["https://myapp.com"]`. |
 | `rate_limit` | integer \| null | `null` | ≥ 1 | Maximum requests per minute per client IP. `null` disables rate limiting entirely. |
 | `log_level` | string | `"info"` | `"debug"` \| `"info"` \| `"warning"` \| `"error"` \| `"critical"` | Uvicorn log verbosity. |
+| `authentication_enabled` | boolean | `true` | - | Enables stateless authentication middleware. When true, `create_api(...)` requires a `StatelessAuthProvider` or fails closed. |
+| `authorization_enabled` | boolean | `true` | - | Enables scope authorization middleware. Requires authentication to be enabled too. |
+| `rate_limit_store` | string | `"memory"` | `"memory"` or `"redis"` | Backend for rate limiting. Redis shares limits across workers/nodes. |
+| `rate_limit_redis_url` | string \| null | `null` | required when Redis is selected | Redis URL for shared rate limiting. |
+| `rate_limit_key_prefix` | string | `"apmoe:rate:"` | - | Redis key prefix for rate-limit entries. |
+| `token_invalidation_store` | string | `"memory"` | `"memory"` or `"redis"` | Backend for JWT `jti` invalidation. Redis shares invalidation across workers/nodes. |
+| `token_invalidation_redis_url` | string \| null | `null` | required when Redis is selected | Redis URL for shared token invalidation. |
+| `token_invalidation_key_prefix` | string | `"apmoe:jwt:invalid:"` | - | Redis key prefix for invalidated JWT ids. |
 
 ---
 
@@ -215,10 +231,20 @@ file is loaded. They take precedence over anything in the file.
 | `APMOE_SERVING_WORKERS` | `serving.workers` | integer | `APMOE_SERVING_WORKERS=8` |
 | `APMOE_SERVING_LOG_LEVEL` | `serving.log_level` | string | `APMOE_SERVING_LOG_LEVEL=debug` |
 | `APMOE_SERVING_RATE_LIMIT` | `serving.rate_limit` | integer | `APMOE_SERVING_RATE_LIMIT=60` |
+| `APMOE_SERVING_RATE_LIMIT_STORE` | `serving.rate_limit_store` | string | `APMOE_SERVING_RATE_LIMIT_STORE=redis` |
+| `APMOE_SERVING_RATE_LIMIT_REDIS_URL` | `serving.rate_limit_redis_url` | string | `APMOE_SERVING_RATE_LIMIT_REDIS_URL=redis://localhost:6379/0` |
+| `APMOE_SERVING_RATE_LIMIT_KEY_PREFIX` | `serving.rate_limit_key_prefix` | string | `APMOE_SERVING_RATE_LIMIT_KEY_PREFIX=apmoe:rate:` |
 | `APMOE_SERVING_CORS_ORIGINS` | `serving.cors_origins` | comma-separated strings | `APMOE_SERVING_CORS_ORIGINS=https://a.com,https://b.com` |
+| `APMOE_SERVING_AUTHENTICATION_ENABLED` | `serving.authentication_enabled` | boolean | `APMOE_SERVING_AUTHENTICATION_ENABLED=false` |
+| `APMOE_SERVING_AUTHORIZATION_ENABLED` | `serving.authorization_enabled` | boolean | `APMOE_SERVING_AUTHORIZATION_ENABLED=false` |
+| `APMOE_SERVING_TOKEN_INVALIDATION_STORE` | `serving.token_invalidation_store` | string | `APMOE_SERVING_TOKEN_INVALIDATION_STORE=redis` |
+| `APMOE_SERVING_TOKEN_INVALIDATION_REDIS_URL` | `serving.token_invalidation_redis_url` | string | `APMOE_SERVING_TOKEN_INVALIDATION_REDIS_URL=redis://localhost:6379/0` |
+| `APMOE_SERVING_TOKEN_INVALIDATION_KEY_PREFIX` | `serving.token_invalidation_key_prefix` | string | `APMOE_SERVING_TOKEN_INVALIDATION_KEY_PREFIX=apmoe:jwt:invalid:` |
 
 If a variable is set but cannot be cast to the target type (e.g. `APMOE_SERVING_PORT=abc`),
 `load_config()` raises a `ConfigurationError` immediately.
+
+Boolean env vars accept `true/false`, `1/0`, `yes/no`, and `on/off`.
 
 ---
 

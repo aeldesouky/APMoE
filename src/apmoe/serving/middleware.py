@@ -1,36 +1,330 @@
-"""Middleware components for the APMoE HTTP serving layer.
-
-Three middleware classes are provided:
-
-* :class:`RequestLoggingMiddleware` — structured JSON request logging with
-  per-request correlation IDs (``X-Correlation-ID`` response header).
-* :class:`RateLimitMiddleware` — sliding-window in-memory rate limiter keyed
-  by client IP.  Configured via
-  :attr:`~apmoe.core.config.ServingConfig.rate_limit`.
-* :class:`AuthPlugin` / :class:`AuthMiddleware` — abstract authentication hook
-  that framework users implement and attach via
-  :func:`~apmoe.serving.app_factory.create_api`.
-"""
+"""Middleware components for the APMoE HTTP serving layer."""
 
 from __future__ import annotations
 
 import json
 import logging
+import inspect
 import time
 import uuid
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from typing import TYPE_CHECKING
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import Any
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
-if TYPE_CHECKING:
-    pass
-
 logger = logging.getLogger("apmoe.serving")
+
+
+# ---------------------------------------------------------------------------
+# Stateless authentication / authorization primitives
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class AuthContext:
+    """Authenticated principal information attached to ``request.state``."""
+
+    subject: str
+    scopes: frozenset[str]
+    token_id: str
+    expires_at: datetime
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+class TokenInvalidationStore(ABC):
+    """Abstract token invalidation store."""
+
+    @abstractmethod
+    def is_invalid(self, token_id: str) -> bool:
+        """Return ``True`` when *token_id* has been invalidated."""
+
+    @abstractmethod
+    def invalidate(self, token_id: str, expires_at: datetime) -> None:
+        """Mark *token_id* invalid until *expires_at*."""
+
+
+class InMemoryTokenInvalidationStore(TokenInvalidationStore):
+    """Process-local invalidation store suitable for local/single-worker use."""
+
+    def __init__(self) -> None:
+        self._invalidated: dict[str, datetime] = {}
+
+    def _prune(self, now: datetime | None = None) -> None:
+        current = now or datetime.now(UTC)
+        expired = [
+            token_id
+            for token_id, expires_at in self._invalidated.items()
+            if expires_at <= current
+        ]
+        for token_id in expired:
+            del self._invalidated[token_id]
+
+    def is_invalid(self, token_id: str) -> bool:
+        """Return whether a token id is currently invalidated."""
+        self._prune()
+        return token_id in self._invalidated
+
+    def invalidate(self, token_id: str, expires_at: datetime) -> None:
+        """Invalidate a token id until its token expiry time."""
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        self._prune()
+        if expires_at > datetime.now(UTC):
+            self._invalidated[token_id] = expires_at
+
+
+class RedisTokenInvalidationStore(TokenInvalidationStore):
+    """Redis-backed JWT invalidation store shared across workers/nodes."""
+
+    def __init__(self, redis_url: str, *, key_prefix: str = "apmoe:jwt:invalid:") -> None:
+        try:
+            import redis
+        except ImportError as exc:
+            raise RuntimeError(
+                "RedisTokenInvalidationStore requires the redis package. "
+                "Install it with: pip install apmoe[redis]"
+            ) from exc
+
+        self._client = redis.Redis.from_url(redis_url)
+        self._key_prefix = key_prefix
+
+    def _key(self, token_id: str) -> str:
+        return f"{self._key_prefix}{token_id}"
+
+    def is_invalid(self, token_id: str) -> bool:
+        """Return whether a token id has an active invalidation key."""
+        return bool(self._client.exists(self._key(token_id)))
+
+    def invalidate(self, token_id: str, expires_at: datetime) -> None:
+        """Invalidate a token id in Redis until its token expiry time."""
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        ttl_seconds = int((expires_at - datetime.now(UTC)).total_seconds())
+        if ttl_seconds > 0:
+            self._client.setex(self._key(token_id), ttl_seconds, "1")
+
+
+class StatelessAuthProvider(ABC):
+    """Abstract request credential verifier."""
+
+    @abstractmethod
+    def authenticate(self, request: Request) -> AuthContext | None:
+        """Return an :class:`AuthContext` for valid credentials, else ``None``."""
+
+
+class AuthorizationPolicy(ABC):
+    """Abstract authorization policy for authenticated requests."""
+
+    @abstractmethod
+    def authorize(self, context: AuthContext, request: Request) -> bool:
+        """Return ``True`` if *context* may access *request*."""
+
+
+class JWTBearerAuthProvider(StatelessAuthProvider):
+    """JWT Bearer credential verifier with token invalidation support."""
+
+    def __init__(
+        self,
+        *,
+        signing_key: str | bytes,
+        algorithms: Sequence[str] = ("HS256",),
+        issuer: str | None = None,
+        audience: str | Sequence[str] | None = None,
+        subject_claim: str = "sub",
+        token_id_claim: str = "jti",
+        scopes_claim: str | None = None,
+        invalidation_store: TokenInvalidationStore | None = None,
+    ) -> None:
+        self._signing_key = signing_key
+        self._algorithms = list(algorithms)
+        self._issuer = issuer
+        self._audience = audience
+        self._subject_claim = subject_claim
+        self._token_id_claim = token_id_claim
+        self._scopes_claim = scopes_claim
+        self._uses_default_invalidation_store = invalidation_store is None
+        self._invalidation_store = invalidation_store or InMemoryTokenInvalidationStore()
+
+    def set_invalidation_store(
+        self,
+        invalidation_store: TokenInvalidationStore,
+        *,
+        override: bool = False,
+    ) -> None:
+        """Attach the serving-layer invalidation store to this provider."""
+        if override or self._uses_default_invalidation_store:
+            self._invalidation_store = invalidation_store
+            self._uses_default_invalidation_store = False
+
+    def authenticate(self, request: Request) -> AuthContext | None:
+        """Authenticate a request using its Bearer token."""
+        auth_header = request.headers.get("Authorization", "")
+        scheme, _, token = auth_header.partition(" ")
+        if scheme.lower() != "bearer" or not token:
+            return None
+
+        try:
+            import jwt
+        except ImportError as exc:
+            raise RuntimeError(
+                "PyJWT is required for JWTBearerAuthProvider. "
+                "Install it with: pip install apmoe[security]"
+            ) from exc
+
+        try:
+            payload: dict[str, Any] = jwt.decode(
+                token,
+                self._signing_key,
+                algorithms=self._algorithms,
+                issuer=self._issuer,
+                audience=self._audience,
+                options={
+                    "require": ["exp", self._subject_claim, self._token_id_claim],
+                    "verify_signature": True,
+                    "verify_exp": True,
+                },
+            )
+        except jwt.PyJWTError:
+            return None
+
+        subject = str(payload.get(self._subject_claim, "")).strip()
+        token_id = str(payload.get(self._token_id_claim, "")).strip()
+        if not subject or not token_id:
+            return None
+        if self._invalidation_store.is_invalid(token_id):
+            return None
+
+        expires_at = self._expiry_from_claim(payload.get("exp"))
+        if expires_at is None:
+            return None
+
+        return AuthContext(
+            subject=subject,
+            scopes=frozenset(self._extract_scopes(payload)),
+            token_id=token_id,
+            expires_at=expires_at,
+            metadata={
+                key: value
+                for key, value in payload.items()
+                if key not in {self._subject_claim, self._token_id_claim}
+            },
+        )
+
+    def _extract_scopes(self, payload: Mapping[str, Any]) -> set[str]:
+        claim_names = [self._scopes_claim] if self._scopes_claim else ["scope", "scopes"]
+        for claim_name in claim_names:
+            if claim_name is None or claim_name not in payload:
+                continue
+            raw = payload[claim_name]
+            if isinstance(raw, str):
+                return {scope for scope in raw.split() if scope}
+            if isinstance(raw, Sequence) and not isinstance(raw, (bytes, bytearray, str)):
+                return {str(scope) for scope in raw if str(scope)}
+        return set()
+
+    def _expiry_from_claim(self, raw_exp: Any) -> datetime | None:
+        try:
+            exp = float(raw_exp)
+        except (TypeError, ValueError):
+            return None
+        return datetime.fromtimestamp(exp, UTC)
+
+
+class ScopeAuthorizationPolicy(AuthorizationPolicy):
+    """Route-to-scope authorization policy used by the default serving layer."""
+
+    DEFAULT_REQUIRED_SCOPES: Mapping[tuple[str, str], frozenset[str]] = {
+        ("POST", "/predict"): frozenset({"predict"}),
+        ("POST", "/v1/predict"): frozenset({"predict"}),
+        ("GET", "/info"): frozenset({"info:read"}),
+        ("GET", "/v1/info"): frozenset({"info:read"}),
+    }
+
+    def __init__(
+        self,
+        required_scopes: Mapping[tuple[str, str], set[str] | frozenset[str]] | None = None,
+    ) -> None:
+        self._required_scopes: dict[tuple[str, str], frozenset[str]] = {
+            key: frozenset(value)
+            for key, value in (required_scopes or self.DEFAULT_REQUIRED_SCOPES).items()
+        }
+
+    def authorize(self, context: AuthContext, request: Request) -> bool:
+        """Authorize based on route-required scopes."""
+        required = self._required_scopes.get((request.method.upper(), request.url.path))
+        if not required:
+            return True
+        return required.issubset(context.scopes)
+
+
+class AuthenticationMiddleware(BaseHTTPMiddleware):
+    """Authenticate requests and attach ``request.state.auth_context``."""
+
+    _DEFAULT_EXCLUDED: frozenset[str] = frozenset({"/health", "/v1/health"})
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        auth_provider: StatelessAuthProvider,
+        exclude_paths: frozenset[str] | None = None,
+    ) -> None:
+        super().__init__(app)
+        self._auth_provider = auth_provider
+        self._excluded = exclude_paths if exclude_paths is not None else self._DEFAULT_EXCLUDED
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        """Authenticate then forward the request."""
+        if request.url.path in self._excluded:
+            return await call_next(request)
+
+        context = self._auth_provider.authenticate(request)
+        if inspect.isawaitable(context):
+            context = await context
+        if context is None:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Unauthorized."},
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        request.state.auth_context = context
+        return await call_next(request)
+
+
+class AuthorizationMiddleware(BaseHTTPMiddleware):
+    """Authorize authenticated requests using a configured policy."""
+
+    _DEFAULT_EXCLUDED: frozenset[str] = frozenset({"/health", "/v1/health"})
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        authorization_policy: AuthorizationPolicy,
+        exclude_paths: frozenset[str] | None = None,
+    ) -> None:
+        super().__init__(app)
+        self._authorization_policy = authorization_policy
+        self._excluded = exclude_paths if exclude_paths is not None else self._DEFAULT_EXCLUDED
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        """Authorize then forward the request."""
+        if request.url.path in self._excluded:
+            return await call_next(request)
+
+        context = getattr(request.state, "auth_context", None)
+        if not isinstance(context, AuthContext):
+            return JSONResponse(status_code=403, content={"detail": "Forbidden."})
+        if not self._authorization_policy.authorize(context, request):
+            return JSONResponse(status_code=403, content={"detail": "Forbidden."})
+        return await call_next(request)
+
 
 # ---------------------------------------------------------------------------
 # Request Logging
@@ -38,43 +332,10 @@ logger = logging.getLogger("apmoe.serving")
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
-    """Log every HTTP request as a structured JSON record.
-
-    A UUID4 correlation ID is generated for each inbound request and
-    propagated in two ways:
-
-    * Stored on ``request.state.correlation_id`` so route handlers and
-      downstream middleware can reference it.
-    * Returned to the caller as the ``X-Correlation-ID`` response header.
-
-    Log records are emitted at ``INFO`` level to the ``apmoe.serving``
-    logger and contain:
-
-    * ``correlation_id``
-    * ``method`` (HTTP verb)
-    * ``path``
-    * ``query`` (raw query string, ``null`` when absent)
-    * ``status_code``
-    * ``duration_ms`` (rounded to 2 decimal places)
-    * ``client_host``
-
-    Example log line::
-
-        {"correlation_id": "…", "method": "POST", "path": "/predict",
-         "query": null, "status_code": 200, "duration_ms": 14.32,
-         "client_host": "127.0.0.1"}
-    """
+    """Log every HTTP request as a structured JSON record."""
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        """Process the request, attach a correlation ID, and log the outcome.
-
-        Args:
-            request: The incoming HTTP request.
-            call_next: Callable that passes the request to the next ASGI layer.
-
-        Returns:
-            The HTTP response with an added ``X-Correlation-ID`` header.
-        """
+        """Process the request, attach a correlation ID, and log the outcome."""
         correlation_id = str(uuid.uuid4())
         request.state.correlation_id = correlation_id
         started_at = time.perf_counter()
@@ -84,7 +345,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         except Exception as exc:
             duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
             logger.error(
-                "[%s] 500 Unhandled exception in %s %s after %.2f ms — %s: %s",
+                "[%s] 500 Unhandled exception in %s %s after %.2f ms - %s: %s",
                 correlation_id,
                 request.method,
                 request.url.path,
@@ -109,7 +370,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
         if status_code >= 500:
             logger.error(
-                "[%s] %d %s %s — %.2f ms",
+                "[%s] %d %s %s - %.2f ms",
                 correlation_id,
                 status_code,
                 request.method,
@@ -118,7 +379,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             )
         elif status_code >= 400:
             logger.warning(
-                "[%s] %d %s %s — %.2f ms",
+                "[%s] %d %s %s - %.2f ms",
                 correlation_id,
                 status_code,
                 request.method,
@@ -137,61 +398,86 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 # ---------------------------------------------------------------------------
 
 
-class RateLimitMiddleware(BaseHTTPMiddleware):
-    """Sliding-window in-memory rate limiter keyed by client IP address.
+class RateLimitStore(ABC):
+    """Abstract store used by request rate limiting."""
 
-    For each client IP, a list of request timestamps is maintained.  On every
-    incoming request the list is pruned to the last 60 seconds; if the
-    remaining count equals or exceeds *max_requests_per_minute* the request
-    is rejected with ``HTTP 429 Too Many Requests`` and a
-    ``Retry-After: 60`` header.
+    @abstractmethod
+    def allow_request(self, key: str, *, limit: int, window_seconds: int) -> bool:
+        """Record one request and return whether it is within the limit."""
 
-    .. note::
-        This implementation is **in-process only**.  With multiple uvicorn
-        workers (separate OS processes), each worker has its own counter, so
-        the effective limit is ``max_requests_per_minute x workers``.  For
-        production deployments requiring strict limits, use a shared store
-        (Redis, etc.) outside the framework.
 
-    Args:
-        app: The ASGI application to wrap.
-        max_requests_per_minute: Maximum number of requests allowed per client
-            IP in any rolling 60-second window.
-    """
+class InMemoryRateLimitStore(RateLimitStore):
+    """Process-local sliding-window rate-limit store."""
 
-    def __init__(self, app: ASGIApp, max_requests_per_minute: int) -> None:
-        """Initialise the rate limiter.
-
-        Args:
-            app: The ASGI application to wrap.
-            max_requests_per_minute: Request cap per client IP per 60 seconds.
-        """
-        super().__init__(app)
-        self._limit: int = max_requests_per_minute
-        self._window_seconds: float = 60.0
+    def __init__(self) -> None:
         self._request_log: dict[str, list[float]] = defaultdict(list)
 
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        """Enforce the rate limit before forwarding to the next ASGI layer.
-
-        Args:
-            request: The incoming HTTP request.
-            call_next: Callable that passes the request to the next layer.
-
-        Returns:
-            A ``429 Too Many Requests`` response if the limit is exceeded,
-            otherwise the response from the next layer.
-        """
-        client_ip: str = request.client.host if request.client else "unknown"
+    def allow_request(self, key: str, *, limit: int, window_seconds: int) -> bool:
+        """Record one request in the local sliding window."""
         now = time.monotonic()
-        cutoff = now - self._window_seconds
+        cutoff = now - window_seconds
+        self._request_log[key] = [t for t in self._request_log[key] if t > cutoff]
+        if len(self._request_log[key]) >= limit:
+            return False
+        self._request_log[key].append(now)
+        return True
 
-        # Prune timestamps that fall outside the rolling window
-        self._request_log[client_ip] = [
-            t for t in self._request_log[client_ip] if t > cutoff
-        ]
 
-        if len(self._request_log[client_ip]) >= self._limit:
+class RedisRateLimitStore(RateLimitStore):
+    """Redis-backed sliding-window rate-limit store shared across workers/nodes."""
+
+    def __init__(self, redis_url: str, *, key_prefix: str = "apmoe:rate:") -> None:
+        try:
+            import redis
+        except ImportError as exc:
+            raise RuntimeError(
+                "RedisRateLimitStore requires the redis package. "
+                "Install it with: pip install apmoe[redis]"
+            ) from exc
+
+        self._client = redis.Redis.from_url(redis_url)
+        self._key_prefix = key_prefix
+
+    def _key(self, key: str) -> str:
+        return f"{self._key_prefix}{key}"
+
+    def allow_request(self, key: str, *, limit: int, window_seconds: int) -> bool:
+        """Record one request in a Redis sorted-set sliding window."""
+        now = time.time()
+        redis_key = self._key(key)
+        member = f"{now}:{uuid.uuid4()}"
+        pipe = self._client.pipeline()
+        pipe.zremrangebyscore(redis_key, 0, now - window_seconds)
+        pipe.zadd(redis_key, {member: now})
+        pipe.zcard(redis_key)
+        pipe.expire(redis_key, window_seconds + 1)
+        results = pipe.execute()
+        return int(results[2]) <= limit
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """Sliding-window rate limiter keyed by client IP address."""
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        max_requests_per_minute: int,
+        store: RateLimitStore | None = None,
+    ) -> None:
+        """Initialise the rate limiter."""
+        super().__init__(app)
+        self._limit: int = max_requests_per_minute
+        self._window_seconds = 60
+        self._store = store or InMemoryRateLimitStore()
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        """Enforce the rate limit before forwarding to the next ASGI layer."""
+        client_ip: str = request.client.host if request.client else "unknown"
+        if not self._store.allow_request(
+            client_ip,
+            limit=self._limit,
+            window_seconds=self._window_seconds,
+        ):
             return JSONResponse(
                 status_code=429,
                 content={
@@ -202,85 +488,28 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 headers={"Retry-After": "60"},
             )
 
-        self._request_log[client_ip].append(now)
         return await call_next(request)
 
 
 # ---------------------------------------------------------------------------
-# Authentication hook
+# Legacy authentication hook
 # ---------------------------------------------------------------------------
 
 
 class AuthPlugin(ABC):
-    """Abstract authentication hook for the APMoE serving layer.
-
-    Subclass :class:`AuthPlugin` and pass an instance to
-    :func:`~apmoe.serving.app_factory.create_api` to enforce custom
-    authentication on every incoming request (except paths listed in
-    ``exclude_paths``).
-
-    Example::
-
-        from starlette.requests import Request
-        from starlette.responses import JSONResponse, Response
-        from apmoe.serving.middleware import AuthPlugin
-
-        class ApiKeyAuth(AuthPlugin):
-            def __init__(self, valid_keys: set[str]) -> None:
-                self._keys = valid_keys
-
-            def authenticate(self, request: Request) -> bool:
-                key = request.headers.get("X-API-Key", "")
-                return key in self._keys
-
-            def unauthenticated_response(self) -> Response:
-                return JSONResponse(
-                    status_code=401,
-                    content={"detail": "Invalid or missing API key."},
-                )
-    """
+    """Backwards-compatible binary authentication hook."""
 
     @abstractmethod
     def authenticate(self, request: Request) -> bool:
-        """Determine whether the request is authenticated.
-
-        Args:
-            request: The incoming Starlette request.
-
-        Returns:
-            ``True`` to allow the request through; ``False`` to reject it.
-        """
+        """Determine whether the request is authenticated."""
 
     def unauthenticated_response(self) -> Response:
-        """Return the HTTP response sent when authentication fails.
-
-        Override to customise the rejection payload and status code.
-        The default implementation returns ``HTTP 401 Unauthorized``.
-
-        Returns:
-            A :class:`~starlette.responses.Response` (or subclass) returned
-            directly to the client without invoking the route handler.
-        """
-        return JSONResponse(
-            status_code=401,
-            content={"detail": "Unauthorized."},
-        )
+        """Return the HTTP response sent when authentication fails."""
+        return JSONResponse(status_code=401, content={"detail": "Unauthorized."})
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
-    """Middleware that delegates authentication to a developer-provided :class:`AuthPlugin`.
-
-    Paths listed in *exclude_paths* bypass authentication entirely — by
-    default this includes ``/health`` and ``/info`` so monitoring systems can
-    probe the service without credentials.
-
-    Args:
-        app: The ASGI application to wrap.
-        auth_plugin: The :class:`AuthPlugin` instance that performs
-            the authentication check.
-        exclude_paths: Set of URL paths that bypass authentication.
-            Defaults to ``{"/health", "/info"}``.
-    """
+    """Middleware that delegates authentication to a legacy :class:`AuthPlugin`."""
 
     _DEFAULT_EXCLUDED: frozenset[str] = frozenset(
         {"/health", "/info", "/v1/health", "/v1/info"}
@@ -292,13 +521,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         auth_plugin: AuthPlugin,
         exclude_paths: frozenset[str] | None = None,
     ) -> None:
-        """Initialise the authentication middleware.
-
-        Args:
-            app: The ASGI application to wrap.
-            auth_plugin: Plugin that performs the authentication check.
-            exclude_paths: Optional override for paths that skip auth.
-        """
+        """Initialise the authentication middleware."""
         super().__init__(app)
         self._auth: AuthPlugin = auth_plugin
         self._excluded: frozenset[str] = (
@@ -306,17 +529,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         )
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        """Run the auth check before forwarding to the next ASGI layer.
-
-        Args:
-            request: The incoming HTTP request.
-            call_next: Callable that passes the request to the next layer.
-
-        Returns:
-            The response from :meth:`AuthPlugin.unauthenticated_response` if
-            the request fails authentication; otherwise the response from the
-            next layer.
-        """
+        """Run the auth check before forwarding to the next ASGI layer."""
         if request.url.path in self._excluded:
             return await call_next(request)
 

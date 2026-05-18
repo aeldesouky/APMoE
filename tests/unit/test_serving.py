@@ -17,6 +17,7 @@ Covers:
 from __future__ import annotations
 
 import json as _json
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -28,7 +29,15 @@ from starlette.responses import JSONResponse, Response
 from apmoe.core.exceptions import APMoEError, PipelineError
 from apmoe.core.types import ExpertOutput, Prediction
 from apmoe.serving.app_factory import create_api
-from apmoe.serving.middleware import AuthPlugin
+from apmoe.serving.middleware import (
+    AuthContext,
+    AuthPlugin,
+    InMemoryRateLimitStore,
+    InMemoryTokenInvalidationStore,
+    JWTBearerAuthProvider,
+    RateLimitStore,
+    StatelessAuthProvider,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -64,11 +73,27 @@ def _make_serving_cfg(
     *,
     cors_origins: list[str] | None = None,
     rate_limit: int | None = None,
+    authentication_enabled: bool = False,
+    authorization_enabled: bool = False,
+    token_invalidation_store: str = "memory",
+    token_invalidation_redis_url: str | None = None,
+    token_invalidation_key_prefix: str = "apmoe:jwt:invalid:",
+    rate_limit_store: str = "memory",
+    rate_limit_redis_url: str | None = None,
+    rate_limit_key_prefix: str = "apmoe:rate:",
 ) -> MagicMock:
     """Return a mock ServingConfig."""
     cfg = MagicMock()
     cfg.cors_origins = cors_origins if cors_origins is not None else ["*"]
     cfg.rate_limit = rate_limit
+    cfg.authentication_enabled = authentication_enabled
+    cfg.authorization_enabled = authorization_enabled
+    cfg.token_invalidation_store = token_invalidation_store
+    cfg.token_invalidation_redis_url = token_invalidation_redis_url
+    cfg.token_invalidation_key_prefix = token_invalidation_key_prefix
+    cfg.rate_limit_store = rate_limit_store
+    cfg.rate_limit_redis_url = rate_limit_redis_url
+    cfg.rate_limit_key_prefix = rate_limit_key_prefix
     return cfg
 
 
@@ -76,6 +101,12 @@ def _make_app(
     *,
     cors_origins: list[str] | None = None,
     rate_limit: int | None = None,
+    authentication_enabled: bool = False,
+    authorization_enabled: bool = False,
+    token_invalidation_store: str = "memory",
+    token_invalidation_redis_url: str | None = None,
+    rate_limit_store: str = "memory",
+    rate_limit_redis_url: str | None = None,
     predict_result: Prediction | None = None,
     predict_side_effect: Exception | None = None,
     expert_health: dict[str, bool] | None = None,
@@ -85,6 +116,12 @@ def _make_app(
     mock.config.apmoe.serving = _make_serving_cfg(
         cors_origins=cors_origins,
         rate_limit=rate_limit,
+        authentication_enabled=authentication_enabled,
+        authorization_enabled=authorization_enabled,
+        token_invalidation_store=token_invalidation_store,
+        token_invalidation_redis_url=token_invalidation_redis_url,
+        rate_limit_store=rate_limit_store,
+        rate_limit_redis_url=rate_limit_redis_url,
     )
     mock.expert_registry.health_check.return_value = (
         expert_health if expert_health is not None else {"test_expert": True}
@@ -422,6 +459,49 @@ class TestRateLimitMiddleware:
         for _ in range(20):
             assert c.get("/health").status_code == 200
 
+    def test_external_rate_limit_store_can_replace_memory(self) -> None:
+        """An injected rate-limit store is used instead of the default memory store."""
+        app = _make_app(rate_limit=100)
+        c = TestClient(
+            create_api(app, rate_limit_store=_RejectingRateLimitStore()),
+            raise_server_exceptions=False,
+        )
+        assert c.get("/health").status_code == 429
+
+    def test_configured_redis_rate_limit_store_is_used(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Redis rate limiting selected by config is wired into the middleware."""
+        import apmoe.serving.app_factory as app_factory
+
+        created: list[tuple[str, str]] = []
+
+        class _AllowingRedisRateLimitStore(RateLimitStore):
+            def __init__(self, redis_url: str, *, key_prefix: str) -> None:
+                created.append((redis_url, key_prefix))
+
+            def allow_request(self, key: str, *, limit: int, window_seconds: int) -> bool:
+                return True
+
+        monkeypatch.setattr(
+            app_factory,
+            "RedisRateLimitStore",
+            _AllowingRedisRateLimitStore,
+        )
+        app = _make_app(
+            rate_limit=1,
+            rate_limit_store="redis",
+            rate_limit_redis_url="redis://localhost:6379/5",
+        )
+        c = TestClient(create_api(app), raise_server_exceptions=False)
+        assert c.get("/health").status_code == 200
+        assert created == [("redis://localhost:6379/5", "apmoe:rate:")]
+
+    def test_in_memory_rate_limit_store_rejects_after_limit(self) -> None:
+        store = InMemoryRateLimitStore()
+        assert store.allow_request("client", limit=1, window_seconds=60) is True
+        assert store.allow_request("client", limit=1, window_seconds=60) is False
+
 
 # ---------------------------------------------------------------------------
 # CORS
@@ -483,6 +563,37 @@ class _ApiKeyAuth(AuthPlugin):
 
     def authenticate(self, request: Request) -> bool:
         return request.headers.get("X-API-Key") == self._key
+
+
+class _BearerScopeProvider(StatelessAuthProvider):
+    """Test auth provider mapping bearer token text to scopes."""
+
+    def authenticate(self, request: Request) -> AuthContext | None:
+        auth = request.headers.get("Authorization", "")
+        scheme, _, token = auth.partition(" ")
+        if scheme.lower() != "bearer" or not token:
+            return None
+        scopes = set(token.split(","))
+        return AuthContext(
+            subject="test-user",
+            scopes=frozenset(scopes),
+            token_id="token-1",
+            expires_at=datetime.now(UTC) + timedelta(minutes=5),
+        )
+
+
+class _AsyncBearerScopeProvider(_BearerScopeProvider):
+    """Async variant to exercise providers that await I/O."""
+
+    async def authenticate(self, request: Request) -> AuthContext | None:
+        return super().authenticate(request)
+
+
+class _RejectingRateLimitStore(RateLimitStore):
+    """Test store that rejects every request."""
+
+    def allow_request(self, key: str, *, limit: int, window_seconds: int) -> bool:
+        return False
 
 
 class TestAuthMiddleware:
@@ -558,3 +669,232 @@ class TestAuthMiddleware:
         """Without an auth plugin, all endpoints are freely accessible."""
         response = client.post("/predict", json={"keystroke": [[8, 0, 95.0]]})
         assert response.status_code == 200
+
+
+class TestStatelessSecurityMiddleware:
+    """Tests for separate authentication and authorization middleware."""
+
+    def test_enabled_auth_without_provider_fails_closed(self) -> None:
+        app = _make_app(authentication_enabled=True, authorization_enabled=True)
+        with pytest.raises(Exception, match="security_provider"):
+            create_api(app)
+
+    def test_predict_with_required_scope_allowed(self) -> None:
+        app = _make_app(authentication_enabled=True, authorization_enabled=True)
+        c = TestClient(
+            create_api(app, security_provider=_BearerScopeProvider()),
+            raise_server_exceptions=False,
+        )
+        response = c.post(
+            "/predict",
+            json={"keystroke": [[8, 0, 95.0]]},
+            headers={"Authorization": "Bearer predict"},
+        )
+        assert response.status_code == 200
+
+    def test_async_provider_with_required_scope_allowed(self) -> None:
+        app = _make_app(authentication_enabled=True, authorization_enabled=True)
+        c = TestClient(
+            create_api(app, security_provider=_AsyncBearerScopeProvider()),
+            raise_server_exceptions=False,
+        )
+        response = c.post(
+            "/predict",
+            json={"keystroke": [[8, 0, 95.0]]},
+            headers={"Authorization": "Bearer predict"},
+        )
+        assert response.status_code == 200
+
+    def test_missing_token_returns_401(self) -> None:
+        app = _make_app(authentication_enabled=True, authorization_enabled=True)
+        c = TestClient(
+            create_api(app, security_provider=_BearerScopeProvider()),
+            raise_server_exceptions=False,
+        )
+        response = c.post("/predict", json={"keystroke": [[8, 0, 95.0]]})
+        assert response.status_code == 401
+        assert response.headers.get("www-authenticate") == "Bearer"
+
+    def test_missing_scope_returns_403(self) -> None:
+        app = _make_app(authentication_enabled=True, authorization_enabled=True)
+        c = TestClient(
+            create_api(app, security_provider=_BearerScopeProvider()),
+            raise_server_exceptions=False,
+        )
+        response = c.post(
+            "/predict",
+            json={"keystroke": [[8, 0, 95.0]]},
+            headers={"Authorization": "Bearer info:read"},
+        )
+        assert response.status_code == 403
+
+    def test_info_requires_info_read_scope(self) -> None:
+        app = _make_app(authentication_enabled=True, authorization_enabled=True)
+        c = TestClient(
+            create_api(app, security_provider=_BearerScopeProvider()),
+            raise_server_exceptions=False,
+        )
+        denied = c.get("/info", headers={"Authorization": "Bearer predict"})
+        allowed = c.get("/info", headers={"Authorization": "Bearer info:read"})
+        assert denied.status_code == 403
+        assert allowed.status_code == 200
+
+    def test_health_bypasses_stateless_security_by_default(self) -> None:
+        app = _make_app(authentication_enabled=True, authorization_enabled=True)
+        c = TestClient(
+            create_api(app, security_provider=_BearerScopeProvider()),
+            raise_server_exceptions=False,
+        )
+        assert c.get("/health").status_code == 200
+
+    def test_configured_redis_invalidation_store_is_exposed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import apmoe.serving.app_factory as app_factory
+
+        created: list[tuple[str, str]] = []
+
+        class _FakeRedisInvalidationStore(InMemoryTokenInvalidationStore):
+            def __init__(self, redis_url: str, *, key_prefix: str) -> None:
+                super().__init__()
+                created.append((redis_url, key_prefix))
+
+        monkeypatch.setattr(
+            app_factory,
+            "RedisTokenInvalidationStore",
+            _FakeRedisInvalidationStore,
+        )
+        app = _make_app(
+            authentication_enabled=True,
+            authorization_enabled=True,
+            token_invalidation_store="redis",
+            token_invalidation_redis_url="redis://localhost:6379/6",
+        )
+        api = create_api(app, security_provider=_BearerScopeProvider())
+        assert isinstance(api.state.token_invalidation_store, _FakeRedisInvalidationStore)
+        assert created == [("redis://localhost:6379/6", "apmoe:jwt:invalid:")]
+
+    def test_configured_invalidation_store_replaces_jwt_provider_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import apmoe.serving.app_factory as app_factory
+
+        class _FakeRedisInvalidationStore(InMemoryTokenInvalidationStore):
+            def __init__(self, redis_url: str, *, key_prefix: str) -> None:
+                super().__init__()
+
+        monkeypatch.setattr(
+            app_factory,
+            "RedisTokenInvalidationStore",
+            _FakeRedisInvalidationStore,
+        )
+        app = _make_app(
+            authentication_enabled=True,
+            authorization_enabled=True,
+            token_invalidation_store="redis",
+            token_invalidation_redis_url="redis://localhost:6379/7",
+        )
+        provider = JWTBearerAuthProvider(signing_key="secret")
+        api = create_api(app, security_provider=provider)
+        assert provider._invalidation_store is api.state.token_invalidation_store
+
+    def test_disabling_authentication_and_authorization_allows_predict(self) -> None:
+        app = _make_app(authentication_enabled=False, authorization_enabled=False)
+        c = TestClient(create_api(app), raise_server_exceptions=False)
+        response = c.post("/predict", json={"keystroke": [[8, 0, 95.0]]})
+        assert response.status_code == 200
+
+    def test_disabling_authorization_keeps_authentication(self) -> None:
+        app = _make_app(authentication_enabled=True, authorization_enabled=False)
+        c = TestClient(
+            create_api(app, security_provider=_BearerScopeProvider()),
+            raise_server_exceptions=False,
+        )
+        response = c.post(
+            "/predict",
+            json={"keystroke": [[8, 0, 95.0]]},
+            headers={"Authorization": "Bearer unrelated"},
+        )
+        assert response.status_code == 200
+
+
+class TestInMemoryTokenInvalidationStore:
+    """Tests for process-local token invalidation."""
+
+    def test_unknown_token_is_not_invalid(self) -> None:
+        store = InMemoryTokenInvalidationStore()
+        assert store.is_invalid("missing") is False
+
+    def test_invalidated_token_is_invalid(self) -> None:
+        store = InMemoryTokenInvalidationStore()
+        store.invalidate("abc", datetime.now(UTC) + timedelta(minutes=5))
+        assert store.is_invalid("abc") is True
+
+    def test_expired_invalidation_is_pruned(self) -> None:
+        store = InMemoryTokenInvalidationStore()
+        store.invalidate("abc", datetime.now(UTC) - timedelta(seconds=1))
+        assert store.is_invalid("abc") is False
+
+
+class TestJWTBearerAuthProvider:
+    """Tests for JWT Bearer auth when PyJWT is installed."""
+
+    @staticmethod
+    def _request(token: str | None) -> Request:
+        headers: list[tuple[bytes, bytes]] = []
+        if token is not None:
+            headers.append((b"authorization", f"Bearer {token}".encode()))
+        return Request({"type": "http", "method": "GET", "path": "/", "headers": headers})
+
+    def _jwt(self) -> Any:
+        return pytest.importorskip("jwt")
+
+    def _token(self, **claims: Any) -> str:
+        jwt = self._jwt()
+        payload = {
+            "sub": "user-1",
+            "jti": "token-1",
+            "exp": datetime.now(UTC) + timedelta(minutes=5),
+            "scope": "predict info:read",
+            **claims,
+        }
+        return jwt.encode(payload, "secret", algorithm="HS256")
+
+    def test_valid_token_authenticates(self) -> None:
+        token = self._token()
+        provider = JWTBearerAuthProvider(signing_key="secret")
+        context = provider.authenticate(self._request(token))
+        assert context is not None
+        assert context.subject == "user-1"
+        assert context.token_id == "token-1"
+        assert {"predict", "info:read"}.issubset(context.scopes)
+
+    def test_missing_bearer_header_rejected(self) -> None:
+        provider = JWTBearerAuthProvider(signing_key="secret")
+        assert provider.authenticate(self._request(None)) is None
+
+    def test_expired_token_rejected(self) -> None:
+        token = self._token(exp=datetime.now(UTC) - timedelta(minutes=1))
+        provider = JWTBearerAuthProvider(signing_key="secret")
+        assert provider.authenticate(self._request(token)) is None
+
+    def test_wrong_audience_rejected(self) -> None:
+        token = self._token(aud="expected")
+        provider = JWTBearerAuthProvider(signing_key="secret", audience="other")
+        assert provider.authenticate(self._request(token)) is None
+
+    def test_missing_jti_rejected(self) -> None:
+        jwt = self._jwt()
+        token = jwt.encode(
+            {"sub": "user-1", "exp": datetime.now(UTC) + timedelta(minutes=5)},
+            "secret",
+            algorithm="HS256",
+        )
+        provider = JWTBearerAuthProvider(signing_key="secret")
+        assert provider.authenticate(self._request(token)) is None
+
+    def test_invalidated_token_rejected(self) -> None:
+        store = InMemoryTokenInvalidationStore()
+        store.invalidate("token-1", datetime.now(UTC) + timedelta(minutes=5))
+        provider = JWTBearerAuthProvider(signing_key="secret", invalidation_store=store)
+        assert provider.authenticate(self._request(self._token())) is None

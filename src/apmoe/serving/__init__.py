@@ -1,10 +1,43 @@
-"""Serving layer: FastAPI app factory, route handlers, and middleware.
+"""Serving layer public API."""
 
-Public symbols
---------------
-- :func:`~apmoe.serving.app_factory.create_api` — build the FastAPI ASGI app.
-- :class:`~apmoe.serving.middleware.AuthPlugin` — abstract auth hook.
-- :class:`~apmoe.serving.middleware.AuthMiddleware` — auth middleware.
-- :class:`~apmoe.serving.middleware.RateLimitMiddleware` — rate limiting.
-- :class:`~apmoe.serving.middleware.RequestLoggingMiddleware` — request logging.
-"""
+from apmoe.serving.app_factory import create_api
+from apmoe.serving.middleware import (
+    AuthContext,
+    AuthenticationMiddleware,
+    AuthorizationMiddleware,
+    AuthorizationPolicy,
+    AuthMiddleware,
+    AuthPlugin,
+    InMemoryRateLimitStore,
+    InMemoryTokenInvalidationStore,
+    JWTBearerAuthProvider,
+    RateLimitMiddleware,
+    RateLimitStore,
+    RequestLoggingMiddleware,
+    RedisRateLimitStore,
+    RedisTokenInvalidationStore,
+    ScopeAuthorizationPolicy,
+    StatelessAuthProvider,
+    TokenInvalidationStore,
+)
+
+__all__ = [
+    "AuthContext",
+    "AuthenticationMiddleware",
+    "AuthorizationMiddleware",
+    "AuthorizationPolicy",
+    "AuthMiddleware",
+    "AuthPlugin",
+    "InMemoryRateLimitStore",
+    "InMemoryTokenInvalidationStore",
+    "JWTBearerAuthProvider",
+    "RateLimitMiddleware",
+    "RateLimitStore",
+    "RequestLoggingMiddleware",
+    "RedisRateLimitStore",
+    "RedisTokenInvalidationStore",
+    "ScopeAuthorizationPolicy",
+    "StatelessAuthProvider",
+    "TokenInvalidationStore",
+    "create_api",
+]
