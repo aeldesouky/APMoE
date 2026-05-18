@@ -195,13 +195,29 @@ dotted path in any config:
 }
 ```
 
+### `apmoe.experts.providers` package
+
+Provider-specific `RemoteExpert` subclasses ship as first-class framework
+modules under `src/apmoe/experts/providers/`.  Developers reference them
+directly in config — no custom code needed.
+
+| Provider | Class | API |
+|---|---|---|
+| LM Studio | `apmoe.experts.providers.lmstudio.LMStudioExpert` | `/api/v1/chat` (local inference server) |
+
+New providers are added by creating `src/apmoe/experts/providers/<name>.py`,
+subclassing `RemoteExpert`, and registering with the canonical dotted path.
+`$VAR` expansion, retry logic, and circuit-breaking are inherited automatically.
+
 ### Reference config and test script
 
 `configs/llm_remote.json` is a fully portable reference config with zero
-hardcoded values — every deployment-specific field is a `$VAR`:
+hardcoded values — every deployment-specific field is a `$VAR`, and the class
+points at the built-in provider:
 
 ```json
-"endpoint":   "$LLM_ENDPOINT",
+"class":    "apmoe.experts.providers.lmstudio.LMStudioExpert",
+"endpoint": "$LLM_ENDPOINT",
 "request_template": {
   "model":         "$LLM_MODEL",
   "system_prompt": "$LLM_SYSTEM_PROMPT",
@@ -209,13 +225,32 @@ hardcoded values — every deployment-specific field is a `$VAR`:
 }
 ```
 
-`scripts/test_llm_remote.py` is a self-contained end-to-end script that
-demonstrates the full pipeline (image file → `Base64ImageCleaner` →
-`RemoteExpert` → local LLM → age prediction) and includes a `LMStudioExpert`
-subclass showing how to parse non-standard LLM response schemas.
+`scripts/test_llm_remote.py` is a minimal driver (no class definitions, no
+config patching) that accepts an image path argument and bootstraps APMoE
+directly from the real config.
 
 **Verified working with:** LM Studio + `google/gemma-4-e4b`, ~6 s pipeline
-latency on a MacBook (no GPU), predicted age within expected range.
+latency on a MacBook (no GPU).
+
+### Terminal commands
+
+```bash
+# 1. Unit tests — LMStudioExpert only
+.venv/bin/python -m pytest tests/unit/test_lmstudio_expert.py -v
+
+# 2. Full unit suite (regression check)
+.venv/bin/python -m pytest tests/unit/ -q
+
+# 3. End-to-end (LM Studio must be running with the model loaded)
+export LLM_ENDPOINT="http://127.0.0.1:1234/api/v1/chat"
+export LLM_MODEL="google/gemma-4-e4b"
+export LLM_SYSTEM_PROMPT="Return ONLY a single integer representing the estimated age."
+
+python scripts/test_llm_remote.py path/to/your/photo.jpg
+
+# 4. Serve the API (same env vars required)
+apmoe serve --config configs/llm_remote.json
+```
 
 ### DX properties of the LLM integration
 
@@ -224,9 +259,15 @@ latency on a MacBook (no GPU), predicted age within expected range.
 - **Pipeline isolation**: the LLM image processors live in a separate namespace
   (`apmoe.processing.llm`) so the standard `ImageCleaner` / `FaceAgeExpert`
   chain is completely unaffected.
+- **Built-in provider library**: `apmoe.experts.providers` ships ready-made
+  `RemoteExpert` subclasses for popular providers; no custom code is required
+  to use them, and adding a new one is a single-file contribution.
 - **Fail-fast secrets**: missing `$VAR` references raise `ExpertError` at
   startup, not mid-request — the server never partially starts with a broken
   remote configuration.
 - **Subclass-friendly**: `_build_request_body` and `_parse_response` are clean
   extension points; `$VAR` expansion is inherited automatically by subclasses
   that call `super().load_weights()`.
+- **Tested**: 30 dedicated unit tests in `tests/unit/test_lmstudio_expert.py`
+  cover class identity, registry key, all response-parsing paths, error cases,
+  and the full mocked predict round-trip.

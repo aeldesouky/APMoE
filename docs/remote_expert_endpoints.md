@@ -416,7 +416,7 @@ configuration for a local vision-LLM (tested with LM Studio / Gemma 4):
     "experts": [
       {
         "name":       "llm_face_age_expert",
-        "class":      "apmoe.experts.remote.RemoteExpert",
+        "class":      "apmoe.experts.providers.lmstudio.LMStudioExpert",
         "modalities": ["image"],
         "endpoint":   "$LLM_ENDPOINT",
         "endpoint_headers": { "Content-Type": "application/json" },
@@ -434,19 +434,35 @@ configuration for a local vision-LLM (tested with LM Studio / Gemma 4):
 }
 ```
 
-Start it with:
+### Testing it
+
 ```bash
+# 1. Unit tests — LMStudioExpert only
+.venv/bin/python -m pytest tests/unit/test_lmstudio_expert.py -v
+
+# 2. Full unit suite (regression check)
+.venv/bin/python -m pytest tests/unit/ -q
+
+# 3. End-to-end (LM Studio must be running with the model loaded)
 export LLM_ENDPOINT="http://127.0.0.1:1234/api/v1/chat"
 export LLM_MODEL="google/gemma-4-e4b"
 export LLM_SYSTEM_PROMPT="Return ONLY a single integer representing the estimated age."
+
+python scripts/test_llm_remote.py path/to/your/photo.jpg
+
+# 4. Serve the API (same env vars required)
 apmoe serve --config configs/llm_remote.json
 ```
 
-### Handling non-standard LLM response schemas
+### Built-in provider experts (`apmoe.experts.providers`)
 
-Many local LLM servers return a response that does not match the flat
-`{"predicted_age": ...}` schema. For example, LM Studio's `/api/v1/chat`
-returns:
+For providers with non-standard response schemas, APMoE ships ready-to-use
+`RemoteExpert` subclasses in the `apmoe.experts.providers` package.  These are
+first-class framework classes — no custom code needed.
+
+#### `LMStudioExpert` — LM Studio `/api/v1/chat`
+
+LM Studio returns a typed output array rather than a flat JSON object:
 
 ```json
 {
@@ -454,89 +470,79 @@ returns:
     {"type": "reasoning", "content": "..."},
     {"type": "message",   "content": "34"}
   ],
-  "stats": { "tokens_per_second": 52.7, ... }
+  "stats": { "tokens_per_second": 52.7, "input_tokens": 1920, ... },
+  "model_instance_id": "google/gemma-4-e4b"
 }
 ```
 
-The `response_mapping` dot-path system cannot filter arrays by field value, so
-the recommended approach is to subclass `RemoteExpert` and override
-`_parse_response`:
+`LMStudioExpert` finds the first `"message"`-typed item, extracts the age
+integer with a regex, and forwards inference statistics into `ExpertOutput.metadata`.
+
+Use it directly in config — no custom code required:
+
+```json
+{
+  "class": "apmoe.experts.providers.lmstudio.LMStudioExpert",
+  "endpoint": "$LLM_ENDPOINT"
+}
+```
+
+Unit tests: `tests/unit/test_lmstudio_expert.py` (30 tests).
+
+#### Adding a new provider
+
+To add support for a new provider (e.g. Ollama, vLLM, OpenAI), create
+`src/apmoe/experts/providers/<name>.py`, subclass `RemoteExpert`, and
+register with the canonical dotted path:
 
 ```python
-import re
-from typing import Any
-from apmoe.core.exceptions import ExpertError
-from apmoe.core.types import ExpertOutput
 from apmoe.experts.remote import RemoteExpert
 from apmoe.experts.registry import expert_registry
+from apmoe.core.types import ExpertOutput
+from typing import Any
 
-
-@expert_registry.register("myapp.LMStudioExpert")
-class LMStudioExpert(RemoteExpert):
-    """RemoteExpert that parses the LM Studio /api/v1/chat response."""
-
+@expert_registry.register("apmoe.experts.providers.<name>.<ClassName>")
+class MyProviderExpert(RemoteExpert):
     def _parse_response(
         self, data: Any, consumed_modalities: list[str]
     ) -> ExpertOutput:
-        # Find the first output item with type=="message"
-        message_content = ""
-        for item in data.get("output", []):
-            if item.get("type") == "message":
-                message_content = item.get("content", "").strip()
-                break
-
-        if not message_content:
-            raise ExpertError(
-                "LMStudioExpert: no 'message' item in response.",
-                context={"response": str(data)[:300]},
-            )
-
-        # Extract first integer (the predicted age)
-        numbers = re.findall(r"\b\d+\b", message_content)
-        if not numbers:
-            raise ExpertError(
-                f"LMStudioExpert: no integer found in '{message_content}'.",
-                context={"content": message_content},
-            )
-
-        stats = data.get("stats", {})
-        return ExpertOutput(
-            expert_name=self.name,
-            consumed_modalities=consumed_modalities,
-            predicted_age=float(numbers[0]),
-            confidence=-1.0,   # LLM is a regressor — no calibrated probability
-            metadata={
-                "llm_response":   message_content,
-                "model":          data.get("model_instance_id", "unknown"),
-                "tokens_per_sec": stats.get("tokens_per_second"),
-            },
-        )
+        # Parse the provider-specific response schema
+        ...
 ```
 
-Reference it in config as `"class": "myapp.LMStudioExpert"`.
+All `$VAR` expansion, retry logic, and circuit-breaking from `RemoteExpert`
+are inherited automatically.
 
 ### End-to-end test script
 
-`scripts/test_llm_remote.py` is a self-contained end-to-end test that:
-1. Sets env vars via `os.environ.setdefault` (overridden by real shell exports).
+`scripts/test_llm_remote.py` is a minimal driver that:
+1. Sets env var defaults (overridden by real shell exports).
 2. Bootstraps APMoE from `configs/llm_remote.json`.
-3. Loads `kmelsayed.jpg` as raw bytes and runs the full inference pipeline.
-4. Prints the predicted age with model metadata and pipeline latency.
+3. Accepts an optional image path argument (defaults to `kmelsayed.jpg`).
+4. Runs the full inference pipeline and prints results.
+
+All provider logic lives in `apmoe.experts.providers.lmstudio` — the script
+contains no class definitions and performs no config patching.
 
 ```bash
-# Optionally override the defaults:
-export LLM_ENDPOINT="http://127.0.0.1:1234/api/v1/chat"
-export LLM_MODEL="google/gemma-4-e4b"
+# With a specific image:
+python scripts/test_llm_remote.py path/to/photo.jpg
 
+# With the default image (kmelsayed.jpg in project root):
 python scripts/test_llm_remote.py
 ```
 
 Example output:
 ```
 ────────────────────────────────────────────────────────────
-  APMoE × Local LLM (Gemma 4) — Age Estimation Test
+  APMoE LM Studio end-to-end test
 ────────────────────────────────────────────────────────────
-  ✅  Predicted age : 68 years
+  Image  : photo.jpg
+  Config : llm_remote.json
+  LLM    : http://127.0.0.1:1234/api/v1/chat
+  Model  : google/gemma-4-e4b
+────────────────────────────────────────────────────────────
+  Predicted age    : 68 years
   LLM raw response : "68"
   Model            : google/gemma-4-e4b
   Tokens/sec       : 52.95
@@ -599,10 +605,12 @@ treats `ExpertOutput` objects identically regardless of their origin.
 
 ### LM Studio (local, fully offline)
 
+Uses the built-in `LMStudioExpert` from the providers package — no custom code required:
+
 ```json
 {
   "name":       "llm_face_age_expert",
-  "class":      "myapp.LMStudioExpert",
+  "class":      "apmoe.experts.providers.lmstudio.LMStudioExpert",
   "modalities": ["image"],
   "endpoint":   "$LLM_ENDPOINT",
   "endpoint_headers": { "Content-Type": "application/json" },
@@ -615,7 +623,8 @@ treats `ExpertOutput` objects identically regardless of their origin.
 }
 ```
 
-Pair this with the `apmoe.processing.llm` image pipeline (see above).
+Pair with the `apmoe.processing.llm` image pipeline (see above). See
+`configs/llm_remote.json` for the complete ready-to-use config.
 
 ### Another APMoE instance
 
@@ -775,6 +784,9 @@ The remote expert feature spans the following files:
 | `src/apmoe/experts/registry.py` | `ExpertRegistry.from_configs` detects remote experts, passes constructor kwargs, lazy-imports `RemoteExpert` for auto-registration |
 | `src/apmoe/core/app.py` | `validate()` skips weight-file existence check for remote experts |
 | `pyproject.toml` | `httpx>=0.27` added to core dependencies; `[remote]` optional extras alias added |
-| `src/apmoe/processing/llm/__init__.py` | **New** — `Base64ImageCleaner` (resize + JPEG compress + base64 encode for LLM context windows) and `PassthroughImageAnonymizer` (no-op to satisfy pipeline contract); kept entirely separate from the core builtin modality pipeline |
-| `configs/llm_remote.json` | **New** — reference config for a local vision-LLM; fully driven by `$LLM_ENDPOINT`, `$LLM_MODEL`, `$LLM_SYSTEM_PROMPT` |
-| `scripts/test_llm_remote.py` | **New** — self-contained end-to-end test; includes `LMStudioExpert` subclass that parses the LM Studio `/api/v1/chat` response format |
+| `src/apmoe/processing/llm/__init__.py` | **New** — `Base64ImageCleaner` and `PassthroughImageAnonymizer` for LLM image dispatch; isolated from the core builtin pipeline |
+| `src/apmoe/experts/providers/__init__.py` | **New** — `apmoe.experts.providers` package; documents the extension pattern for adding new providers |
+| `src/apmoe/experts/providers/lmstudio.py` | **New** — `LMStudioExpert`: built-in framework class for the LM Studio `/api/v1/chat` schema; registered as `apmoe.experts.providers.lmstudio.LMStudioExpert` |
+| `configs/llm_remote.json` | **New** — reference config; uses `LMStudioExpert` and `$LLM_ENDPOINT` / `$LLM_MODEL` / `$LLM_SYSTEM_PROMPT` env vars |
+| `scripts/test_llm_remote.py` | **New** — minimal end-to-end driver; accepts an image path argument; no class definitions or config patching |
+| `tests/unit/test_lmstudio_expert.py` | **New** — 30 unit tests covering class identity, registry key, all `_parse_response` paths, error cases, and mocked predict round-trip |
