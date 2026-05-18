@@ -13,7 +13,7 @@
     "experts": [
       {
         "name":       "llm_face_age_expert",
-        "class":      "apmoe.experts.remote.RemoteExpert",
+        "class":      "apmoe.experts.providers.lmstudio.LMStudioExpert",
         "modalities": ["image"],
         "endpoint":   "$LLM_ENDPOINT",
         "endpoint_headers": { "Content-Type": "application/json" },

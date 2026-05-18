@@ -20,8 +20,8 @@ Typical config usage::
       "name": "image",
       "processor": "apmoe.modality.builtin.image.ImageProcessor",
       "pipeline": {
-        "cleaner":    "apmoe.processing.llm.image.Base64ImageCleaner",
-        "anonymizer": "apmoe.processing.llm.image.PassthroughImageAnonymizer"
+        "cleaner":    "apmoe.processing.llm.Base64ImageCleaner",
+        "anonymizer": "apmoe.processing.llm.PassthroughImageAnonymizer"
       }
     }
 """
