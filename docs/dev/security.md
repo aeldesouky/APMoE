@@ -210,6 +210,12 @@ across processes or machines. Horizontal deployments that require logout,
 emergency revocation, or strict global invalidation must use Redis or another
 shared store.
 
+Redis operation failures fall back to the same process-local invalidation store
+used for local deployments. APMoE emits a `redis_token_invalidation_fallback`
+audit event when this happens. This keeps authentication available, but
+invalidations written during the outage are local to that worker and are not
+replayed into Redis.
+
 ---
 
 ## Rate Limiting
@@ -240,6 +246,11 @@ Config-driven Redis selection:
 Important scaling rule: process-local rate limiting multiplies the effective
 limit by the number of workers. Use Redis or an API gateway for strict global
 limits.
+
+Redis operation failures fall back to process-local rate limiting for the
+current worker and emit a `redis_rate_limit_fallback` audit event. During the
+fallback window, rate limits are no longer globally coordinated across workers
+or nodes.
 
 ---
 
@@ -329,6 +340,26 @@ Example:
   ]
 }
 ```
+
+---
+
+## Remote Expert Resilience
+
+Remote expert inference calls can be retried, protected by a per-expert circuit
+breaker, and combined with configurable pipeline fallback:
+
+- `apmoe.remote_retry` retries transient timeouts, network errors, and HTTP
+  `429`, `502`, `503`, and `504` with exponential backoff and optional jitter.
+- `apmoe.remote_circuit_breaker` opens after consecutive remote failures,
+  short-circuits calls while open, and allows a half-open trial after cooldown.
+- `apmoe.expert_failure_policy="skip_failed"` lets prediction aggregate the
+  remaining successful runnable experts and records failed runnable experts in
+  `Prediction.metadata["failed_experts"]`. The default is `"fail_fast"` for
+  backwards compatibility.
+
+Retries do not apply to local ONNX/Keras experts, response mapping errors,
+template errors, response-size violations, invalid JSON, or non-transient HTTP
+statuses such as `400`, `401`, `403`, and `404`.
 
 ---
 
@@ -465,9 +496,12 @@ Implemented event types include:
 | `remote_endpoint_policy` | `allow`, `block` |
 | `remote_call` | `success`, `failure` |
 | `remote_response_limit` | `failure` |
+| `remote_circuit_breaker` | `failure` |
 | `local_artifact_integrity` | `success`, `failure` |
 | `remote_manifest_integrity` | `success`, `failure` |
 | `token_invalidation` | `success` |
+| `redis_rate_limit_fallback` | `failure` |
+| `redis_token_invalidation_fallback` | `failure` |
 
 Config:
 
@@ -518,6 +552,10 @@ Before serving production traffic:
 - use Redis or another shared store for token invalidation in multi-worker or
   multi-node deployments
 - use Redis or an API gateway for strict global rate limiting
+- monitor `redis_rate_limit_fallback` and `redis_token_invalidation_fallback`
+  audit events because fallback state is local to each worker
+- tune `remote_retry`, `remote_circuit_breaker`, and `expert_failure_policy`
+  deliberately for remote experts that can tolerate degraded predictions
 - pin local model artifacts with `integrity.sha256` where artifacts are managed
   outside the package
 - require signed remote manifests for production remote experts
@@ -543,4 +581,3 @@ APMoE intentionally leaves these decisions to the application or platform:
 - model release approval and private signing-key custody
 - privacy policy, consent flows, data retention, and regulatory compliance
 - custom authorization policies beyond the default route scopes
-

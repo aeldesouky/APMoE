@@ -113,8 +113,9 @@ api = create_api(apmoe_app, security_provider=provider)
 ```
 
 Events include authentication success/failure, authorization allow/deny,
-rate-limit blocks, token invalidation, remote endpoint allow/block, remote call
-success/failure, response-limit blocks, and model integrity pass/fail. Set
+rate-limit blocks, token invalidation, Redis fallback activation, remote
+endpoint allow/block, remote call success/failure, remote circuit-breaker
+blocks, response-limit blocks, and model integrity pass/fail. Set
 `apmoe.security.audit_enabled=false` to suppress serving audit events or
 `audit_success_events=false` to log only denials/blocks for authn/authz.
 
@@ -132,6 +133,10 @@ Important deployment note:
   effective total limit is multiplied by worker count.
 - `serving.rate_limit_store="redis"` uses Redis as the shared sliding-window
   store across workers and nodes. Install it with `pip install apmoe[redis]`.
+- If a Redis rate-limit operation fails after startup, APMoE emits
+  `redis_rate_limit_fallback` and uses an in-memory process-local sliding
+  window for that worker. This preserves API availability but the limit is no
+  longer globally coordinated until Redis recovers.
 - For strict global limits across heterogeneous services, Redis or an API
   gateway in front of APMoE is recommended.
 
@@ -234,7 +239,11 @@ class RedisTokenInvalidationStore(TokenInvalidationStore):
 ```
 
 Pass the same store to `JWTBearerAuthProvider` when constructing the provider.
-Redis is optional and not imported unless a Redis store is selected.
+Redis is optional and not imported unless a Redis store is selected. If a Redis
+token invalidation operation fails after startup, APMoE emits
+`redis_token_invalidation_fallback` and uses an in-memory process-local
+fallback store. Invalidations made while Redis is unavailable are local to that
+worker and are not replayed into Redis.
 
 ---
 
@@ -252,6 +261,11 @@ Remote expert endpoints are governed by `apmoe.security`:
 Remote responses are capped by `remote_response_max_bytes` before JSON parsing.
 Set `experts[].endpoint_response_max_bytes` to override the global cap for a
 specific expert. Obvious non-JSON content types are rejected.
+
+Remote inference calls also support transient retries and per-expert circuit
+breakers. Configure `apmoe.remote_retry`, `apmoe.remote_circuit_breaker`, and
+`apmoe.expert_failure_policy` in the top-level config; see
+[configuration.md](configuration.md) for the exact fields and defaults.
 
 Local model artifacts can be pinned with `experts[].integrity.sha256`. Remote
 model integrity uses an RSA-PSS-SHA256 signed manifest verified with a pinned
@@ -300,5 +314,13 @@ From `apmoe.serving` and `apmoe.core.config.ServingConfig`:
 - `cors_origins`
 - `rate_limit`
 - `log_level`
+- `rate_limit_store`
+- `rate_limit_redis_url`
+- `rate_limit_key_prefix`
+- `authentication_enabled`
+- `authorization_enabled`
+- `token_invalidation_store`
+- `token_invalidation_redis_url`
+- `token_invalidation_key_prefix`
 
 Environment overrides are documented in `docs/dev/configuration.md`.

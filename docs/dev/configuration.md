@@ -14,8 +14,9 @@ cfg = load_config("configs/my_project.json")
 
 ## Document structure
 
-The JSON file must have a single top-level key `"apmoe"` containing four
-sections — `modalities`, `experts`, `aggregation`, and `serving`:
+The JSON file must have a single top-level key `"apmoe"` containing the core
+sections `modalities`, `experts`, and `aggregation`, plus optional operational
+sections such as `serving`, `environment`, `security`, and resilience settings:
 
 ```json
 {
@@ -29,8 +30,8 @@ sections — `modalities`, `experts`, `aggregation`, and `serving`:
 ```
 
 `modalities`, `experts`, and `aggregation` are **required**.  
-`serving`, `environment`, and `security` are **optional** — all their fields
-have defaults.
+`serving`, `environment`, `security`, `expert_failure_policy`, `remote_retry`,
+and `remote_circuit_breaker` are **optional** — all their fields have defaults.
 
 ---
 
@@ -218,6 +219,58 @@ Defines how individual expert predictions are combined into a single final answe
 
 ---
 
+## Resilience settings -- optional
+
+These top-level fields control how the prediction path behaves when remote
+experts or individual runnable experts fail:
+
+```json
+{
+  "apmoe": {
+    "expert_failure_policy": "fail_fast",
+    "remote_retry": {
+      "max_attempts": 3,
+      "initial_delay_s": 0.25,
+      "max_delay_s": 2.0,
+      "backoff_multiplier": 2.0,
+      "jitter": true
+    },
+    "remote_circuit_breaker": {
+      "enabled": true,
+      "failure_threshold": 5,
+      "recovery_timeout_s": 30.0
+    }
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `expert_failure_policy` | string | `"fail_fast"` | `"fail_fast"` preserves historical behavior: any runnable expert failure aborts prediction. `"skip_failed"` records failed runnable experts in `Prediction.metadata["failed_experts"]` and aggregates the remaining successful outputs. If every runnable expert fails, the pipeline raises `PipelineError`. |
+| `remote_retry.max_attempts` | integer | `3` | Total attempts for each remote inference call, including the first try. Must be at least 1. |
+| `remote_retry.initial_delay_s` | number | `0.25` | First retry delay in seconds. |
+| `remote_retry.max_delay_s` | number | `2.0` | Upper bound for exponential backoff delay. Must be greater than or equal to `initial_delay_s`. |
+| `remote_retry.backoff_multiplier` | number | `2.0` | Multiplier applied after each failed attempt. |
+| `remote_retry.jitter` | boolean | `true` | Randomizes retry sleep between 0 and the calculated delay to avoid synchronized retry bursts. |
+| `remote_circuit_breaker.enabled` | boolean | `true` | Enables the per-`RemoteExpert` in-memory circuit breaker. |
+| `remote_circuit_breaker.failure_threshold` | integer | `5` | Consecutive remote call failures required before the circuit opens. |
+| `remote_circuit_breaker.recovery_timeout_s` | number | `30.0` | Time before an open circuit moves to half-open and allows one trial call. |
+
+Remote retry applies only to outbound `RemoteExpert` inference calls. It retries
+timeouts, network errors, and HTTP `429`, `502`, `503`, and `504`. It does not
+retry request/template errors, non-JSON responses, response-size violations,
+response mapping errors, or non-transient HTTP statuses such as `400`, `401`,
+`403`, and `404`.
+
+Circuit breakers are process-local and per remote expert instance:
+
+- `closed`: requests run normally.
+- `open`: calls fail immediately with `ExpertError` and circuit metadata.
+- `half-open`: after cooldown, one trial request is allowed; success closes the
+  circuit and failure reopens it.
+
+---
+
 ## `serving` — object, optional
 
 Controls the FastAPI/uvicorn HTTP serving layer. The entire block may be
@@ -258,6 +311,12 @@ omitted; all fields have defaults.
 | `token_invalidation_store` | string | `"memory"` | `"memory"` or `"redis"` | Backend for JWT `jti` invalidation. Redis shares invalidation across workers/nodes. |
 | `token_invalidation_redis_url` | string \| null | `null` | required when Redis is selected | Redis URL for shared token invalidation. |
 | `token_invalidation_key_prefix` | string | `"apmoe:jwt:invalid:"` | - | Redis key prefix for invalidated JWT ids. |
+
+Redis-backed rate limiting and token invalidation fall back to process-local
+memory if Redis operations fail after startup. APMoE emits
+`redis_rate_limit_fallback` or `redis_token_invalidation_fallback` audit events
+when this happens. The fallback keeps the API available, but fallback state is
+local to each worker and is not synchronized back into Redis.
 
 ---
 

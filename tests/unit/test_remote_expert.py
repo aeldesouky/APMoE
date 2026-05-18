@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -270,7 +270,10 @@ class TestRemoteExpertPredict:
 
         # Check what was sent
         call_kwargs = mock_post.call_args
-        sent_body = call_kwargs.kwargs.get("json") or call_kwargs.args[1] if len(call_kwargs.args) > 1 else call_kwargs.kwargs["json"]
+        if "json" in call_kwargs.kwargs:
+            sent_body = call_kwargs.kwargs["json"]
+        else:
+            sent_body = call_kwargs.args[1]
         assert sent_body["expert_name"] == "test_remote"
         assert "keystroke" in sent_body["modalities"]
 
@@ -291,7 +294,10 @@ class TestRemoteExpertPredict:
         with patch("httpx.post", return_value=_mock_response(response_payload)) as mock_post:
             output = expert.predict({"keystroke": self._keystroke_input()})
 
-        sent_body = mock_post.call_args.kwargs.get("json", mock_post.call_args.args[1] if len(mock_post.call_args.args) > 1 else {})
+        if "json" in mock_post.call_args.kwargs:
+            sent_body = mock_post.call_args.kwargs["json"]
+        else:
+            sent_body = mock_post.call_args.args[1]
         assert "inputs" in sent_body
         assert "expert_name" not in sent_body  # custom template — no default keys
 
@@ -423,6 +429,210 @@ class TestRemoteExpertPredict:
         with patch("httpx.post", return_value=resp):
             with pytest.raises(ExpertError, match="Content-Type"):
                 expert.predict({"keystroke": self._keystroke_input()})
+
+    def test_retries_timeout_then_succeeds(self) -> None:
+        import httpx
+
+        expert = _loaded_expert(
+            retry_config=SimpleNamespace(
+                max_attempts=2,
+                initial_delay_s=0.01,
+                max_delay_s=0.01,
+                backoff_multiplier=2.0,
+                jitter=False,
+            )
+        )
+        with (
+            patch("apmoe.experts.remote.time.sleep") as sleep,
+            patch(
+                "httpx.post",
+                side_effect=[
+                    httpx.TimeoutException("timed out"),
+                    _mock_response({"predicted_age": 31.0}),
+                ],
+            ) as mock_post,
+        ):
+            output = expert.predict({"keystroke": self._keystroke_input()})
+
+        assert output.predicted_age == pytest.approx(31.0)
+        assert mock_post.call_count == 2
+        sleep.assert_called_once()
+
+    def test_retries_transient_http_status_then_succeeds(self) -> None:
+        import httpx
+
+        expert = _loaded_expert(
+            retry_config=SimpleNamespace(
+                max_attempts=2,
+                initial_delay_s=0.01,
+                max_delay_s=0.01,
+                backoff_multiplier=2.0,
+                jitter=False,
+            )
+        )
+        retry_resp = MagicMock()
+        retry_resp.status_code = 503
+        retry_resp.text = "try again"
+        http_err = httpx.HTTPStatusError("503", request=MagicMock(), response=retry_resp)
+        with (
+            patch("apmoe.experts.remote.time.sleep"),
+            patch(
+                "httpx.post",
+                side_effect=[
+                    http_err,
+                    _mock_response({"predicted_age": 36.0}),
+                ],
+            ) as mock_post,
+        ):
+            output = expert.predict({"keystroke": self._keystroke_input()})
+
+        assert output.predicted_age == pytest.approx(36.0)
+        assert mock_post.call_count == 2
+
+    def test_does_not_retry_non_transient_http_status(self) -> None:
+        import httpx
+
+        expert = _loaded_expert(
+            retry_config=SimpleNamespace(
+                max_attempts=3,
+                initial_delay_s=0.01,
+                max_delay_s=0.01,
+                backoff_multiplier=2.0,
+                jitter=False,
+            )
+        )
+        resp = MagicMock()
+        resp.status_code = 400
+        resp.text = "bad request"
+        http_err = httpx.HTTPStatusError("400", request=MagicMock(), response=resp)
+        with patch("httpx.post", side_effect=http_err) as mock_post:
+            with pytest.raises(ExpertError, match="HTTP 400"):
+                expert.predict({"keystroke": self._keystroke_input()})
+
+        assert mock_post.call_count == 1
+
+    def test_does_not_retry_response_mapping_error(self) -> None:
+        expert = _loaded_expert(
+            retry_config=SimpleNamespace(
+                max_attempts=3,
+                initial_delay_s=0.01,
+                max_delay_s=0.01,
+                backoff_multiplier=2.0,
+                jitter=False,
+            )
+        )
+        with patch("httpx.post", return_value=_mock_response({"score": 0.9})) as mock_post:
+            with pytest.raises(ExpertError, match="predicted_age"):
+                expert.predict({"keystroke": self._keystroke_input()})
+
+        assert mock_post.call_count == 1
+
+    def test_honors_retry_max_attempts(self) -> None:
+        import httpx
+
+        expert = _loaded_expert(
+            retry_config=SimpleNamespace(
+                max_attempts=2,
+                initial_delay_s=0.01,
+                max_delay_s=0.01,
+                backoff_multiplier=2.0,
+                jitter=False,
+            )
+        )
+        with (
+            patch("apmoe.experts.remote.time.sleep"),
+            patch("httpx.post", side_effect=httpx.RequestError("down")) as mock_post,
+        ):
+            with pytest.raises(ExpertError, match="network error"):
+                expert.predict({"keystroke": self._keystroke_input()})
+
+        assert mock_post.call_count == 2
+
+    def test_circuit_breaker_opens_and_short_circuits(self) -> None:
+        import httpx
+
+        expert = _loaded_expert(
+            retry_config=SimpleNamespace(
+                max_attempts=1,
+                initial_delay_s=0.01,
+                max_delay_s=0.01,
+                backoff_multiplier=2.0,
+                jitter=False,
+            ),
+            circuit_breaker_config=SimpleNamespace(
+                enabled=True,
+                failure_threshold=1,
+                recovery_timeout_s=30.0,
+            ),
+        )
+
+        with patch("httpx.post", side_effect=httpx.RequestError("down")):
+            with pytest.raises(ExpertError, match="network error"):
+                expert.predict({"keystroke": self._keystroke_input()})
+
+        with patch("httpx.post") as mock_post:
+            with pytest.raises(ExpertError, match="circuit breaker is open"):
+                expert.predict({"keystroke": self._keystroke_input()})
+
+        mock_post.assert_not_called()
+
+    def test_circuit_breaker_half_open_success_closes(self) -> None:
+        import httpx
+
+        expert = _loaded_expert(
+            retry_config=SimpleNamespace(
+                max_attempts=1,
+                initial_delay_s=0.01,
+                max_delay_s=0.01,
+                backoff_multiplier=2.0,
+                jitter=False,
+            ),
+            circuit_breaker_config=SimpleNamespace(
+                enabled=True,
+                failure_threshold=1,
+                recovery_timeout_s=0.1,
+            ),
+        )
+
+        with patch("httpx.post", side_effect=httpx.RequestError("down")):
+            with pytest.raises(ExpertError):
+                expert.predict({"keystroke": self._keystroke_input()})
+
+        expert._circuit_breaker._opened_at -= 1.0  # type: ignore[attr-defined]
+        with patch("httpx.post", return_value=_mock_response({"predicted_age": 44.0})):
+            output = expert.predict({"keystroke": self._keystroke_input()})
+
+        assert output.predicted_age == pytest.approx(44.0)
+        assert expert.get_info()["circuit_state"] == "closed"
+
+    def test_circuit_breaker_half_open_failure_reopens(self) -> None:
+        import httpx
+
+        expert = _loaded_expert(
+            retry_config=SimpleNamespace(
+                max_attempts=1,
+                initial_delay_s=0.01,
+                max_delay_s=0.01,
+                backoff_multiplier=2.0,
+                jitter=False,
+            ),
+            circuit_breaker_config=SimpleNamespace(
+                enabled=True,
+                failure_threshold=1,
+                recovery_timeout_s=0.1,
+            ),
+        )
+
+        with patch("httpx.post", side_effect=httpx.RequestError("down")):
+            with pytest.raises(ExpertError):
+                expert.predict({"keystroke": self._keystroke_input()})
+
+        expert._circuit_breaker._opened_at -= 1.0  # type: ignore[attr-defined]
+        with patch("httpx.post", side_effect=httpx.RequestError("still down")):
+            with pytest.raises(ExpertError, match="network error"):
+                expert.predict({"keystroke": self._keystroke_input()})
+
+        assert expert.get_info()["circuit_state"] == "open"
 
 
 class TestRemoteEndpointPolicy:

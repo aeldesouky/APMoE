@@ -40,7 +40,7 @@ from typing import Any
 
 from apmoe.aggregation.base import AggregatorStrategy, aggregator_registry
 from apmoe.core.config import FrameworkConfig, load_config
-from apmoe.core.exceptions import ConfigurationError, ExpertError, ServingError
+from apmoe.core.exceptions import ConfigurationError, ServingError
 from apmoe.core.pipeline import InferencePipeline, ModalityChain
 from apmoe.core.registry import legacy_dotted_import_alias
 from apmoe.core.security import ensure_correlation_id, redact_value
@@ -198,6 +198,8 @@ class APMoEApp:
             apmoe_cfg.modalities,
             security_config=apmoe_cfg.security,
             environment=apmoe_cfg.environment,
+            remote_retry_config=apmoe_cfg.remote_retry,
+            remote_circuit_breaker_config=apmoe_cfg.remote_circuit_breaker,
         )
 
         # 5. Resolve aggregation strategy
@@ -227,6 +229,7 @@ class APMoEApp:
             expert_registry=expert_reg,
             aggregator=aggregator,
             confidence_threshold=apmoe_cfg.confidence_threshold,
+            expert_failure_policy=apmoe_cfg.expert_failure_policy,
         )
 
         return cls(
@@ -491,6 +494,9 @@ class APMoEApp:
             "environment": self._config.apmoe.environment,
             "security": redact_value(self._config.apmoe.security.model_dump()),
             "confidence_threshold": self._config.apmoe.confidence_threshold,
+            "expert_failure_policy": self._config.apmoe.expert_failure_policy,
+            "remote_retry": self._config.apmoe.remote_retry.model_dump(),
+            "remote_circuit_breaker": self._config.apmoe.remote_circuit_breaker.model_dump(),
         }
 
     def __repr__(self) -> str:

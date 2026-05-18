@@ -157,6 +157,7 @@ class InferencePipeline:
     expert_registry: ExpertRegistry
     aggregator: AggregatorStrategy
     confidence_threshold: float | None = None
+    expert_failure_policy: str = "fail_fast"
     on_before_process: list[OnBeforeProcess] = field(default_factory=list)
     on_after_embed: list[OnAfterEmbed] = field(default_factory=list)
     on_after_expert: list[OnAfterExpert] = field(default_factory=list)
@@ -438,6 +439,7 @@ class InferencePipeline:
             )
 
         expert_outputs: list[ExpertOutput] = []
+        failed_experts: dict[str, str] = {}
         for expert in runnable:
             expert_inputs = {
                 mod: processed[mod]
@@ -446,13 +448,32 @@ class InferencePipeline:
             }
             try:
                 output = expert.predict(expert_inputs)
-            except ExpertError:
+            except ExpertError as exc:
+                if self.expert_failure_policy == "skip_failed":
+                    failed_experts[expert.name] = str(exc)
+                    logger.error(
+                        "Expert '%s' failed during inference and will be skipped: %s",
+                        expert.name,
+                        exc,
+                        exc_info=True,
+                    )
+                    continue
                 raise
             except Exception as exc:  # noqa: BLE001
-                raise ExpertError(
+                wrapped = ExpertError(
                     f"Expert '{expert.name}' raised an unhandled exception: {exc}",
                     context={"expert": expert.name},
-                ) from exc
+                )
+                if self.expert_failure_policy == "skip_failed":
+                    failed_experts[expert.name] = str(wrapped)
+                    logger.error(
+                        "Expert '%s' raised an unhandled exception and will be skipped: %s",
+                        expert.name,
+                        exc,
+                        exc_info=True,
+                    )
+                    continue
+                raise wrapped from exc
 
             expert_outputs.append(output)
             self._run_hooks(self.on_after_expert, output)
@@ -464,6 +485,7 @@ class InferencePipeline:
                     "available_modalities": sorted(available),
                     "skipped_experts": skipped_names,
                     "failed_modalities": list(failed_modalities.keys()),
+                    "failed_experts": failed_experts,
                 },
             )
 
@@ -482,6 +504,7 @@ class InferencePipeline:
                 "pipeline_latency_s": round(time.monotonic() - start_time, 6),
                 "available_modalities": sorted(available),
                 "failed_modalities": failed_modalities,
+                "failed_experts": failed_experts,
             },
         )
 

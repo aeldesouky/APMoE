@@ -99,9 +99,11 @@ window for clients.
 
 APMoE includes framework-level security controls for stateless JWT
 authentication, scope authorization, shared Redis-backed token invalidation and
-rate limiting, remote expert endpoint allowlists, remote response limits,
-local SHA-256 model checks, RSA-signed remote model manifests, correlation IDs,
-auditable security logs, and secret redaction. See
+rate limiting with process-local fallback on Redis outages, remote expert
+endpoint allowlists, remote retries and circuit breakers, configurable
+prediction fallback, remote response limits, local SHA-256 model checks,
+RSA-signed remote model manifests, correlation IDs, auditable security logs,
+and secret redaction. See
 [`docs/dev/security.md`](docs/dev/security.md) for the full reference and
 production checklist.
 

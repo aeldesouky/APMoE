@@ -215,6 +215,7 @@ def _make_pipeline(
     chains: dict[str, ModalityChain],
     experts: list[ExpertPlugin],
     aggregator: AggregatorStrategy | None = None,
+    expert_failure_policy: str = "fail_fast",
 ) -> InferencePipeline:
     """Wire an :class:`InferencePipeline` from simple components."""
     registry = ExpertRegistry()
@@ -224,6 +225,7 @@ def _make_pipeline(
         chains=chains,
         expert_registry=registry,
         aggregator=aggregator or _SumAggregator(),
+        expert_failure_policy=expert_failure_policy,
     )
 
 
@@ -467,6 +469,50 @@ class TestRunExpertFailure:
         )
         with pytest.raises(ExpertError, match="direct expert error"):
             pipeline.run({"visual": b"img"})
+
+    def test_skip_failed_policy_aggregates_successful_experts(self) -> None:
+        pipeline = _make_pipeline(
+            chains={"visual": _make_chain("visual")},
+            experts=[
+                _ExplodingExpert(),
+                _ConstantExpert("healthy_expert", ["visual"], age=42.0),
+            ],
+            expert_failure_policy="skip_failed",
+        )
+
+        prediction = pipeline.run({"visual": b"img"})
+
+        assert prediction.predicted_age == pytest.approx(42.0)
+        assert {o.expert_name for o in prediction.per_expert_outputs} == {"healthy_expert"}
+        assert "exploding_expert" in prediction.metadata["failed_experts"]
+        assert prediction.skipped_experts == []
+
+    def test_skip_failed_policy_raises_when_all_runnable_experts_fail(self) -> None:
+        pipeline = _make_pipeline(
+            chains={"visual": _make_chain("visual")},
+            experts=[_ExplodingExpert()],
+            expert_failure_policy="skip_failed",
+        )
+
+        with pytest.raises(PipelineError, match="No experts produced output") as exc_info:
+            pipeline.run({"visual": b"img"})
+
+        assert "exploding_expert" in exc_info.value.context["failed_experts"]
+
+    def test_async_skip_failed_policy_matches_sync_behavior(self) -> None:
+        pipeline = _make_pipeline(
+            chains={"visual": _make_chain("visual")},
+            experts=[
+                _ExplodingExpert(),
+                _ConstantExpert("healthy_expert", ["visual"], age=37.0),
+            ],
+            expert_failure_policy="skip_failed",
+        )
+
+        prediction = asyncio.run(pipeline.run_async({"visual": b"img"}))
+
+        assert prediction.predicted_age == pytest.approx(37.0)
+        assert "exploding_expert" in prediction.metadata["failed_experts"]
 
 
 # ---------------------------------------------------------------------------

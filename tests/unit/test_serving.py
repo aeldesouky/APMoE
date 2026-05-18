@@ -17,7 +17,9 @@ Covers:
 from __future__ import annotations
 
 import json as _json
+import sys
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -36,6 +38,8 @@ from apmoe.serving.middleware import (
     InMemoryTokenInvalidationStore,
     JWTBearerAuthProvider,
     RateLimitStore,
+    RedisRateLimitStore,
+    RedisTokenInvalidationStore,
     StatelessAuthProvider,
 )
 
@@ -514,6 +518,41 @@ class TestRateLimitMiddleware:
         assert store.allow_request("client", limit=1, window_seconds=60) is True
         assert store.allow_request("client", limit=1, window_seconds=60) is False
 
+    def test_redis_rate_limit_store_falls_back_to_memory(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A Redis outage degrades to process-local rate limiting."""
+
+        class _FailingPipeline:
+            def zremrangebyscore(self, *args: Any) -> None:
+                return None
+
+            def zadd(self, *args: Any) -> None:
+                return None
+
+            def zcard(self, *args: Any) -> None:
+                return None
+
+            def expire(self, *args: Any) -> None:
+                return None
+
+            def execute(self) -> list[int]:
+                raise RuntimeError("redis unavailable")
+
+        class _FailingRedis:
+            def pipeline(self) -> _FailingPipeline:
+                return _FailingPipeline()
+
+        fake_redis = SimpleNamespace(
+            Redis=SimpleNamespace(from_url=lambda url: _FailingRedis())
+        )
+        monkeypatch.setitem(sys.modules, "redis", fake_redis)
+
+        store = RedisRateLimitStore("redis://unavailable/0")
+
+        assert store.allow_request("client", limit=1, window_seconds=60) is True
+        assert store.allow_request("client", limit=1, window_seconds=60) is False
+
 
 # ---------------------------------------------------------------------------
 # CORS
@@ -880,6 +919,32 @@ class TestInMemoryTokenInvalidationStore:
         store = InMemoryTokenInvalidationStore()
         store.invalidate("abc", datetime.now(UTC) - timedelta(seconds=1))
         assert store.is_invalid("abc") is False
+
+
+class TestRedisTokenInvalidationStoreFallback:
+    """Redis token invalidation falls back to in-memory state on outages."""
+
+    def test_redis_token_invalidation_store_falls_back_to_memory(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class _FailingRedis:
+            def exists(self, key: str) -> bool:
+                raise RuntimeError("redis unavailable")
+
+            def setex(self, key: str, ttl_seconds: int, value: str) -> None:
+                raise RuntimeError("redis unavailable")
+
+        fake_redis = SimpleNamespace(
+            Redis=SimpleNamespace(from_url=lambda url: _FailingRedis())
+        )
+        monkeypatch.setitem(sys.modules, "redis", fake_redis)
+
+        store = RedisTokenInvalidationStore("redis://unavailable/0")
+        expires_at = datetime.now(UTC) + timedelta(minutes=5)
+
+        assert store.is_invalid("token-1") is False
+        store.invalidate("token-1", expires_at)
+        assert store.is_invalid("token-1") is True
 
 
 class TestJWTBearerAuthProvider:

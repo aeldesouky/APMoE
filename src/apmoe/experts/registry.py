@@ -432,6 +432,8 @@ class ExpertRegistry:
         modality_configs: list[ModalityConfig],
         security_config: object | None = None,
         environment: str = "development",
+        remote_retry_config: object | None = None,
+        remote_circuit_breaker_config: object | None = None,
     ) -> ExpertRegistry:
         """Build a live :class:`ExpertRegistry` from config objects.
 
@@ -524,6 +526,8 @@ class ExpertRegistry:
                         endpoint_response_max_bytes=expert_cfg.endpoint_response_max_bytes,
                         security_config=security_config,
                         environment=environment,
+                        retry_config=remote_retry_config,
+                        circuit_breaker_config=remote_circuit_breaker_config,
                     )
                 else:
                     instance = expert_cls()

@@ -231,6 +231,28 @@ uv run pytest tests/unit/test_pipeline.py::TestRunMultiModality -v
 uv run pytest -x
 ```
 
+### Resilience end-to-end smoke script
+
+The repository also includes a standalone script for the resilience paths that
+are easier to validate as a bootstrapped mini-application:
+
+```bash
+python scripts/e2e_resilience.py
+```
+
+It registers local test components, bootstraps `APMoEApp.from_config()`, and
+checks:
+
+- `expert_failure_policy="skip_failed"` aggregates successful experts and
+  records failed runnable experts.
+- `RemoteExpert` retries transient failures, then opens and short-circuits its
+  circuit breaker after repeated failures.
+- Redis-backed rate limiting and token invalidation fall back to process-local
+  memory when Redis operations fail.
+
+The script uses in-process fakes for remote HTTP and Redis, so it does not
+require network access or a running Redis server.
+
 ---
 
 ## Guidelines for contributors

@@ -438,6 +438,50 @@ class TestFromConfig:
         with pytest.raises(ExpertError, match="Cannot resolve expert class"):
             APMoEApp.from_config(cfg_path)
 
+    def test_from_config_wires_resilience_policies(self, tmp_path: Path) -> None:
+        config: dict[str, Any] = {
+            "apmoe": {
+                "modalities": [
+                    {
+                        "name": "visual",
+                        "processor": _VISUAL_PROC,
+                        "pipeline": {"cleaner": _CLEANER, "anonymizer": _ANONYMIZER},
+                    }
+                ],
+                "experts": [
+                    {
+                        "name": "remote_visual",
+                        "class": "apmoe.experts.remote.RemoteExpert",
+                        "endpoint": "https://models.example.com/predict",
+                        "modalities": ["visual"],
+                    }
+                ],
+                "aggregation": {"strategy": _AGGREGATOR},
+                "expert_failure_policy": "skip_failed",
+                "remote_retry": {
+                    "max_attempts": 4,
+                    "initial_delay_s": 0.1,
+                    "max_delay_s": 1.0,
+                    "backoff_multiplier": 2.0,
+                    "jitter": False,
+                },
+                "remote_circuit_breaker": {
+                    "enabled": True,
+                    "failure_threshold": 2,
+                    "recovery_timeout_s": 5.0,
+                },
+            }
+        }
+        cfg_path = tmp_path / "cfg.json"
+        cfg_path.write_text(json.dumps(config))
+
+        app = APMoEApp.from_config(cfg_path)
+
+        assert app.pipeline.expert_failure_policy == "skip_failed"
+        remote_info = app.expert_registry.get("remote_visual").get_info()
+        assert remote_info["retry"]["max_attempts"] == 4
+        assert remote_info["retry"]["jitter"] is False
+
 
 # ---------------------------------------------------------------------------
 # app.predict() — end-to-end inference

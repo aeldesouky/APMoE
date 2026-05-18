@@ -3,18 +3,13 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from apmoe.core.config import (
-    APMoEConfig,
-    ExpertConfig,
     FrameworkConfig,
-    ModalityConfig,
-    ServingConfig,
     load_config,
 )
 from apmoe.core.exceptions import ConfigurationError
@@ -186,6 +181,9 @@ class TestParsedValues:
         assert serving.rate_limit_store == "memory"
         assert cfg.apmoe.environment == "development"
         assert cfg.apmoe.security.remote_response_max_bytes == 1_048_576
+        assert cfg.apmoe.expert_failure_policy == "fail_fast"
+        assert cfg.apmoe.remote_retry.max_attempts == 3
+        assert cfg.apmoe.remote_circuit_breaker.enabled is True
 
     def test_redis_store_config_parses(self, tmp_path: Path) -> None:
         data = _base_config()
@@ -263,6 +261,46 @@ class TestParsedValues:
         data["apmoe"]["aggregation"]["weights"] = {"face_expert": 1.0}
         cfg = load_config(_write_config(tmp_path / "c.json", data))
         assert cfg.apmoe.aggregation.weights == {"face_expert": 1.0}
+
+    def test_resilience_config_parses(self, tmp_path: Path) -> None:
+        data = _base_config()
+        data["apmoe"]["expert_failure_policy"] = "skip_failed"
+        data["apmoe"]["remote_retry"] = {
+            "max_attempts": 4,
+            "initial_delay_s": 0.1,
+            "max_delay_s": 1.0,
+            "backoff_multiplier": 1.5,
+            "jitter": False,
+        }
+        data["apmoe"]["remote_circuit_breaker"] = {
+            "enabled": False,
+            "failure_threshold": 2,
+            "recovery_timeout_s": 5.0,
+        }
+        cfg = load_config(_write_config(tmp_path / "c.json", data))
+        assert cfg.apmoe.expert_failure_policy == "skip_failed"
+        assert cfg.apmoe.remote_retry.max_attempts == 4
+        assert cfg.apmoe.remote_retry.jitter is False
+        assert cfg.apmoe.remote_circuit_breaker.enabled is False
+        assert cfg.apmoe.remote_circuit_breaker.failure_threshold == 2
+
+    def test_invalid_expert_failure_policy_raises(self, tmp_path: Path) -> None:
+        data = _base_config()
+        data["apmoe"]["expert_failure_policy"] = "sometimes"
+        with pytest.raises(ConfigurationError, match="expert_failure_policy"):
+            load_config(_write_config(tmp_path / "c.json", data))
+
+    def test_invalid_remote_retry_values_raise(self, tmp_path: Path) -> None:
+        data = _base_config()
+        data["apmoe"]["remote_retry"] = {"max_attempts": 0}
+        with pytest.raises(ConfigurationError, match="remote_retry"):
+            load_config(_write_config(tmp_path / "c.json", data))
+
+    def test_invalid_circuit_breaker_values_raise(self, tmp_path: Path) -> None:
+        data = _base_config()
+        data["apmoe"]["remote_circuit_breaker"] = {"failure_threshold": 0}
+        with pytest.raises(ConfigurationError, match="remote_circuit_breaker"):
+            load_config(_write_config(tmp_path / "c.json", data))
 
 
 # ---------------------------------------------------------------------------

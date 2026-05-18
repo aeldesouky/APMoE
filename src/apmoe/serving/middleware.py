@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
-import inspect
 import time
 import uuid
 from abc import ABC, abstractmethod
@@ -19,7 +19,12 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
-from apmoe.core.security import emit_security_audit, ensure_correlation_id, redact_url
+from apmoe.core.security import (
+    emit_security_audit,
+    ensure_correlation_id,
+    redact_url,
+    redact_value,
+)
 
 logger = logging.getLogger("apmoe.serving")
 
@@ -98,7 +103,12 @@ class InMemoryTokenInvalidationStore(TokenInvalidationStore):
 
 
 class RedisTokenInvalidationStore(TokenInvalidationStore):
-    """Redis-backed JWT invalidation store shared across workers/nodes."""
+    """Redis-backed JWT invalidation store shared across workers/nodes.
+
+    When Redis is temporarily unavailable, operations fall back to an in-memory
+    process-local store so requests can continue. The fallback is intentionally
+    local to the current worker and is not synchronised back to Redis.
+    """
 
     def __init__(self, redis_url: str, *, key_prefix: str = "apmoe:jwt:invalid:") -> None:
         try:
@@ -111,13 +121,18 @@ class RedisTokenInvalidationStore(TokenInvalidationStore):
 
         self._client = redis.Redis.from_url(redis_url)
         self._key_prefix = key_prefix
+        self._fallback = InMemoryTokenInvalidationStore()
 
     def _key(self, token_id: str) -> str:
         return f"{self._key_prefix}{token_id}"
 
     def is_invalid(self, token_id: str) -> bool:
         """Return whether a token id has an active invalidation key."""
-        return bool(self._client.exists(self._key(token_id)))
+        try:
+            return bool(self._client.exists(self._key(token_id)))
+        except Exception as exc:  # noqa: BLE001
+            self._record_fallback("is_invalid", exc)
+            return self._fallback.is_invalid(token_id)
 
     def invalidate(self, token_id: str, expires_at: datetime) -> None:
         """Invalidate a token id in Redis until its token expiry time."""
@@ -125,12 +140,30 @@ class RedisTokenInvalidationStore(TokenInvalidationStore):
             expires_at = expires_at.replace(tzinfo=UTC)
         ttl_seconds = int((expires_at - datetime.now(UTC)).total_seconds())
         if ttl_seconds > 0:
-            self._client.setex(self._key(token_id), ttl_seconds, "1")
-            emit_security_audit(
-                "token_invalidation",
-                "success",
-                metadata={"token_id": token_id, "expires_at": expires_at.isoformat()},
-            )
+            try:
+                self._client.setex(self._key(token_id), ttl_seconds, "1")
+                emit_security_audit(
+                    "token_invalidation",
+                    "success",
+                    metadata={"token_id": token_id, "expires_at": expires_at.isoformat()},
+                )
+            except Exception as exc:  # noqa: BLE001
+                self._record_fallback("invalidate", exc)
+                self._fallback.invalidate(token_id, expires_at)
+
+    def _record_fallback(self, operation: str, exc: Exception) -> None:
+        """Log and audit that Redis token invalidation fell back to memory."""
+        logger.warning(
+            "Redis token invalidation %s failed; using in-memory fallback: %s",
+            operation,
+            exc,
+        )
+        emit_security_audit(
+            "redis_token_invalidation_fallback",
+            "failure",
+            reason=type(exc).__name__,
+            metadata={"operation": operation, "error": redact_value(str(exc))},
+        )
 
 
 class StatelessAuthProvider(ABC):
@@ -498,7 +531,12 @@ class InMemoryRateLimitStore(RateLimitStore):
 
 
 class RedisRateLimitStore(RateLimitStore):
-    """Redis-backed sliding-window rate-limit store shared across workers/nodes."""
+    """Redis-backed sliding-window rate-limit store shared across workers/nodes.
+
+    When Redis is temporarily unavailable, checks fall back to a process-local
+    in-memory sliding window. This preserves availability but loses global
+    cross-worker limit coordination until Redis recovers.
+    """
 
     def __init__(self, redis_url: str, *, key_prefix: str = "apmoe:rate:") -> None:
         try:
@@ -511,22 +549,40 @@ class RedisRateLimitStore(RateLimitStore):
 
         self._client = redis.Redis.from_url(redis_url)
         self._key_prefix = key_prefix
+        self._fallback = InMemoryRateLimitStore()
 
     def _key(self, key: str) -> str:
         return f"{self._key_prefix}{key}"
 
     def allow_request(self, key: str, *, limit: int, window_seconds: int) -> bool:
         """Record one request in a Redis sorted-set sliding window."""
-        now = time.time()
-        redis_key = self._key(key)
-        member = f"{now}:{uuid.uuid4()}"
-        pipe = self._client.pipeline()
-        pipe.zremrangebyscore(redis_key, 0, now - window_seconds)
-        pipe.zadd(redis_key, {member: now})
-        pipe.zcard(redis_key)
-        pipe.expire(redis_key, window_seconds + 1)
-        results = pipe.execute()
-        return int(results[2]) <= limit
+        try:
+            now = time.time()
+            redis_key = self._key(key)
+            member = f"{now}:{uuid.uuid4()}"
+            pipe = self._client.pipeline()
+            pipe.zremrangebyscore(redis_key, 0, now - window_seconds)
+            pipe.zadd(redis_key, {member: now})
+            pipe.zcard(redis_key)
+            pipe.expire(redis_key, window_seconds + 1)
+            results = pipe.execute()
+            return int(results[2]) <= limit
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Redis rate-limit check failed; using in-memory fallback: %s",
+                exc,
+            )
+            emit_security_audit(
+                "redis_rate_limit_fallback",
+                "failure",
+                reason=type(exc).__name__,
+                metadata={"error": redact_value(str(exc))},
+            )
+            return self._fallback.allow_request(
+                key,
+                limit=limit,
+                window_seconds=window_seconds,
+            )
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):

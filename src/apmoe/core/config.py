@@ -37,7 +37,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic import ValidationError as PydanticValidationError
@@ -237,6 +237,63 @@ class ExpertIntegrityConfig(BaseModel):
         return v
 
 
+class RemoteRetryConfig(BaseModel):
+    """Retry policy for remote expert inference calls."""
+
+    max_attempts: int = 3
+    initial_delay_s: float = 0.25
+    max_delay_s: float = 2.0
+    backoff_multiplier: float = 2.0
+    jitter: bool = True
+
+    @field_validator("max_attempts")
+    @classmethod
+    def max_attempts_must_be_positive(cls, v: int) -> int:
+        """Require at least one attempt."""
+        if v < 1:
+            raise ValueError("remote_retry.max_attempts must be >= 1.")
+        return v
+
+    @field_validator("initial_delay_s", "max_delay_s", "backoff_multiplier")
+    @classmethod
+    def retry_numbers_must_be_positive(cls, v: float) -> float:
+        """Require positive retry timing values."""
+        if v <= 0:
+            raise ValueError("remote_retry numeric values must be > 0.")
+        return v
+
+    @model_validator(mode="after")
+    def validate_retry_delay_bounds(self) -> "RemoteRetryConfig":
+        """Ensure the configured maximum delay can contain the initial delay."""
+        if self.max_delay_s < self.initial_delay_s:
+            raise ValueError("remote_retry.max_delay_s must be >= initial_delay_s.")
+        return self
+
+
+class RemoteCircuitBreakerConfig(BaseModel):
+    """Circuit-breaker policy for remote expert inference calls."""
+
+    enabled: bool = True
+    failure_threshold: int = 5
+    recovery_timeout_s: float = 30.0
+
+    @field_validator("failure_threshold")
+    @classmethod
+    def failure_threshold_must_be_positive(cls, v: int) -> int:
+        """Require at least one failure before opening a circuit."""
+        if v < 1:
+            raise ValueError("remote_circuit_breaker.failure_threshold must be >= 1.")
+        return v
+
+    @field_validator("recovery_timeout_s")
+    @classmethod
+    def recovery_timeout_must_be_positive(cls, v: float) -> float:
+        """Require a positive recovery timeout."""
+        if v <= 0:
+            raise ValueError("remote_circuit_breaker.recovery_timeout_s must be > 0.")
+        return v
+
+
 class AggregationConfig(BaseModel):
     """Configuration for the aggregation/combination strategy.
 
@@ -374,6 +431,11 @@ class APMoEConfig(BaseModel):
     environment: str = "development"
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     confidence_threshold: float | None = None
+    expert_failure_policy: Literal["fail_fast", "skip_failed"] = "fail_fast"
+    remote_retry: RemoteRetryConfig = Field(default_factory=RemoteRetryConfig)
+    remote_circuit_breaker: RemoteCircuitBreakerConfig = Field(
+        default_factory=RemoteCircuitBreakerConfig
+    )
 
     @field_validator("environment")
     @classmethod

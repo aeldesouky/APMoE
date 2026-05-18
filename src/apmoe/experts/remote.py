@@ -84,6 +84,9 @@ import copy
 import json
 import logging
 import os
+import random
+import time
+from dataclasses import dataclass
 from typing import Any
 
 from apmoe.core.exceptions import ExpertError
@@ -93,11 +96,120 @@ from apmoe.core.security import (
     redact_value,
     validate_remote_url,
 )
-from apmoe.core.types import EmbeddingResult, ExpertOutput, ModalityData, ProcessedInput
+from apmoe.core.types import EmbeddingResult, ExpertOutput, ProcessedInput
 from apmoe.experts.base import ExpertPlugin
 from apmoe.experts.registry import expert_registry
 
 logger = logging.getLogger("apmoe.experts.remote")
+
+_TRANSIENT_STATUS_CODES = {429, 502, 503, 504}
+
+
+@dataclass(frozen=True)
+class _RemoteRetryPolicy:
+    """Resolved retry settings for one remote expert."""
+
+    max_attempts: int = 3
+    initial_delay_s: float = 0.25
+    max_delay_s: float = 2.0
+    backoff_multiplier: float = 2.0
+    jitter: bool = True
+
+    @classmethod
+    def from_config(cls, config: Any | None) -> "_RemoteRetryPolicy":
+        """Build a retry policy from a Pydantic config object or defaults."""
+        if config is None:
+            return cls()
+        return cls(
+            max_attempts=int(getattr(config, "max_attempts", cls.max_attempts)),
+            initial_delay_s=float(
+                getattr(config, "initial_delay_s", cls.initial_delay_s)
+            ),
+            max_delay_s=float(getattr(config, "max_delay_s", cls.max_delay_s)),
+            backoff_multiplier=float(
+                getattr(config, "backoff_multiplier", cls.backoff_multiplier)
+            ),
+            jitter=bool(getattr(config, "jitter", cls.jitter)),
+        )
+
+
+@dataclass(frozen=True)
+class _CircuitBreakerPolicy:
+    """Resolved circuit-breaker settings for one remote expert."""
+
+    enabled: bool = True
+    failure_threshold: int = 5
+    recovery_timeout_s: float = 30.0
+
+    @classmethod
+    def from_config(cls, config: Any | None) -> "_CircuitBreakerPolicy":
+        """Build a circuit-breaker policy from a Pydantic config object or defaults."""
+        if config is None:
+            return cls()
+        return cls(
+            enabled=bool(getattr(config, "enabled", cls.enabled)),
+            failure_threshold=int(
+                getattr(config, "failure_threshold", cls.failure_threshold)
+            ),
+            recovery_timeout_s=float(
+                getattr(config, "recovery_timeout_s", cls.recovery_timeout_s)
+            ),
+        )
+
+
+class _CircuitBreaker:
+    """Small in-memory circuit breaker for a single remote expert instance."""
+
+    def __init__(self, policy: _CircuitBreakerPolicy) -> None:
+        self._policy = policy
+        self._state = "closed"
+        self._failure_count = 0
+        self._opened_at: float | None = None
+
+    @property
+    def state(self) -> str:
+        """Return the current circuit state."""
+        if (
+            self._policy.enabled
+            and self._state == "open"
+            and self._opened_at is not None
+            and time.monotonic() - self._opened_at >= self._policy.recovery_timeout_s
+        ):
+            self._state = "half_open"
+        return self._state
+
+    def before_call(self) -> None:
+        """Raise if the circuit is open and not ready for a trial call."""
+        if not self._policy.enabled:
+            return
+        if self.state == "open":
+            raise ExpertError(
+                "remote circuit breaker is open",
+                context={"circuit_state": "open"},
+            )
+
+    def record_success(self) -> None:
+        """Close the circuit after a successful call."""
+        if not self._policy.enabled:
+            return
+        self._state = "closed"
+        self._failure_count = 0
+        self._opened_at = None
+
+    def record_failure(self) -> None:
+        """Record a failed call and open the circuit when the threshold is reached."""
+        if not self._policy.enabled:
+            return
+        if self.state == "half_open":
+            self._open()
+            return
+        self._failure_count += 1
+        if self._failure_count >= self._policy.failure_threshold:
+            self._open()
+
+    def _open(self) -> None:
+        self._state = "open"
+        self._opened_at = time.monotonic()
 
 
 # ---------------------------------------------------------------------------
@@ -407,6 +519,8 @@ class RemoteExpert(ExpertPlugin):
         endpoint_response_max_bytes: int | None = None,
         security_config: Any | None = None,
         environment: str = "development",
+        retry_config: Any | None = None,
+        circuit_breaker_config: Any | None = None,
     ) -> None:
         """Initialise the remote expert.
 
@@ -431,6 +545,10 @@ class RemoteExpert(ExpertPlugin):
         self._response_max_bytes = endpoint_response_max_bytes
         self._security_config = security_config
         self._environment = environment
+        self._retry_policy = _RemoteRetryPolicy.from_config(retry_config)
+        self._circuit_breaker = _CircuitBreaker(
+            _CircuitBreakerPolicy.from_config(circuit_breaker_config)
+        )
         self._headers: dict[str, str] = {}  # populated in load_weights
         self._loaded: bool = False
 
@@ -536,56 +654,9 @@ class RemoteExpert(ExpertPlugin):
             redact_url(self._endpoint),
         )
         try:
-            response = httpx.post(
-                self._endpoint,
-                json=body,
-                headers=self._headers,
-                timeout=self._timeout,
-            )
-            response.raise_for_status()
+            response = self._post_with_resilience(httpx, body)
             data = self._parse_limited_json_response(response)
-        except httpx.TimeoutException as exc:
-            emit_security_audit(
-                "remote_call",
-                "failure",
-                expert_name=self._expert_name,
-                endpoint_host=self._endpoint_host(),
-                reason="timeout",
-            )
-            raise ExpertError(
-                f"RemoteExpert '{self._expert_name}': request timed out after "
-                f"{self._timeout}s - {redact_url(self._endpoint)}",
-                context={"expert": self._expert_name, "endpoint": redact_url(self._endpoint)},
-            ) from exc
-        except httpx.HTTPStatusError as exc:
-            emit_security_audit(
-                "remote_call",
-                "failure",
-                expert_name=self._expert_name,
-                endpoint_host=self._endpoint_host(),
-                reason=f"http_{exc.response.status_code}",
-            )
-            raise ExpertError(
-                f"RemoteExpert '{self._expert_name}': HTTP {exc.response.status_code} "
-                f"from {redact_url(self._endpoint)}: {redact_value(exc.response.text[:200])}",
-                context={
-                    "expert": self._expert_name,
-                    "endpoint": redact_url(self._endpoint),
-                    "status_code": exc.response.status_code,
-                },
-            ) from exc
-        except httpx.RequestError as exc:
-            emit_security_audit(
-                "remote_call",
-                "failure",
-                expert_name=self._expert_name,
-                endpoint_host=self._endpoint_host(),
-                reason="network_error",
-            )
-            raise ExpertError(
-                f"RemoteExpert '{self._expert_name}': network error - {exc}",
-                context={"expert": self._expert_name, "endpoint": redact_url(self._endpoint)},
-            ) from exc
+            self._circuit_breaker.record_success()
         except ExpertError:
             raise
         except Exception as exc:
@@ -619,6 +690,14 @@ class RemoteExpert(ExpertPlugin):
             "endpoint": redact_url(self._endpoint),
             "has_request_template": self._request_template is not None,
             "has_response_mapping": self._response_mapping is not None,
+            "retry": {
+                "max_attempts": self._retry_policy.max_attempts,
+                "initial_delay_s": self._retry_policy.initial_delay_s,
+                "max_delay_s": self._retry_policy.max_delay_s,
+                "backoff_multiplier": self._retry_policy.backoff_multiplier,
+                "jitter": self._retry_policy.jitter,
+            },
+            "circuit_state": self._circuit_breaker.state,
             "loaded": self.is_loaded,
         }
 
@@ -656,6 +735,157 @@ class RemoteExpert(ExpertPlugin):
 
         # Default schema
         return {"expert_name": self._expert_name, "modalities": serialised}
+
+    def _post_with_resilience(self, httpx: Any, body: dict[str, Any]) -> Any:
+        """POST to the configured endpoint with retry/backoff and circuit checks."""
+        try:
+            self._circuit_breaker.before_call()
+        except ExpertError as exc:
+            emit_security_audit(
+                "remote_circuit_breaker",
+                "failure",
+                expert_name=self._expert_name,
+                endpoint_host=self._endpoint_host(),
+                reason="open",
+            )
+            raise ExpertError(
+                f"RemoteExpert '{self._expert_name}': circuit breaker is open for "
+                f"{redact_url(self._endpoint)}",
+                context={
+                    "expert": self._expert_name,
+                    "endpoint": redact_url(self._endpoint),
+                    "circuit_state": "open",
+                },
+            ) from exc
+
+        last_exc: Exception | None = None
+        attempts = self._retry_policy.max_attempts
+        for attempt in range(1, attempts + 1):
+            try:
+                response = httpx.post(
+                    self._endpoint,
+                    json=body,
+                    headers=self._headers,
+                    timeout=self._timeout,
+                )
+                response.raise_for_status()
+                return response
+            except httpx.TimeoutException as exc:
+                last_exc = exc
+                if not self._should_retry(attempt, attempts):
+                    self._circuit_breaker.record_failure()
+                    emit_security_audit(
+                        "remote_call",
+                        "failure",
+                        expert_name=self._expert_name,
+                        endpoint_host=self._endpoint_host(),
+                        reason="timeout",
+                        metadata={"attempts": attempt},
+                    )
+                    raise ExpertError(
+                        f"RemoteExpert '{self._expert_name}': request timed out after "
+                        f"{self._timeout}s - {redact_url(self._endpoint)}",
+                        context={
+                            "expert": self._expert_name,
+                            "endpoint": redact_url(self._endpoint),
+                            "attempts": attempt,
+                        },
+                    ) from exc
+            except httpx.HTTPStatusError as exc:
+                status_code = exc.response.status_code
+                if status_code not in _TRANSIENT_STATUS_CODES:
+                    emit_security_audit(
+                        "remote_call",
+                        "failure",
+                        expert_name=self._expert_name,
+                        endpoint_host=self._endpoint_host(),
+                        reason=f"http_{status_code}",
+                        metadata={"attempts": attempt},
+                    )
+                    raise ExpertError(
+                        f"RemoteExpert '{self._expert_name}': HTTP {status_code} "
+                        f"from {redact_url(self._endpoint)}: "
+                        f"{redact_value(exc.response.text[:200])}",
+                        context={
+                            "expert": self._expert_name,
+                            "endpoint": redact_url(self._endpoint),
+                            "status_code": status_code,
+                            "attempts": attempt,
+                        },
+                    ) from exc
+                last_exc = exc
+                if not self._should_retry(attempt, attempts):
+                    self._circuit_breaker.record_failure()
+                    emit_security_audit(
+                        "remote_call",
+                        "failure",
+                        expert_name=self._expert_name,
+                        endpoint_host=self._endpoint_host(),
+                        reason=f"http_{status_code}",
+                        metadata={"attempts": attempt},
+                    )
+                    raise ExpertError(
+                        f"RemoteExpert '{self._expert_name}': HTTP {status_code} "
+                        f"from {redact_url(self._endpoint)}: "
+                        f"{redact_value(exc.response.text[:200])}",
+                        context={
+                            "expert": self._expert_name,
+                            "endpoint": redact_url(self._endpoint),
+                            "status_code": status_code,
+                            "attempts": attempt,
+                        },
+                    ) from exc
+            except httpx.RequestError as exc:
+                last_exc = exc
+                if not self._should_retry(attempt, attempts):
+                    self._circuit_breaker.record_failure()
+                    emit_security_audit(
+                        "remote_call",
+                        "failure",
+                        expert_name=self._expert_name,
+                        endpoint_host=self._endpoint_host(),
+                        reason="network_error",
+                        metadata={"attempts": attempt},
+                    )
+                    raise ExpertError(
+                        f"RemoteExpert '{self._expert_name}': network error - {exc}",
+                        context={
+                            "expert": self._expert_name,
+                            "endpoint": redact_url(self._endpoint),
+                            "attempts": attempt,
+                        },
+                    ) from exc
+
+            self._sleep_before_retry(attempt)
+
+        self._circuit_breaker.record_failure()
+        raise ExpertError(
+            f"RemoteExpert '{self._expert_name}': request failed after {attempts} attempts.",
+            context={
+                "expert": self._expert_name,
+                "endpoint": redact_url(self._endpoint),
+                "attempts": attempts,
+                "last_error": str(last_exc) if last_exc else None,
+            },
+        )
+
+    def _should_retry(self, attempt: int, max_attempts: int) -> bool:
+        """Return whether another retry attempt remains."""
+        return attempt < max_attempts
+
+    def _sleep_before_retry(self, failed_attempt: int) -> None:
+        """Sleep using exponential backoff and optional jitter."""
+        base_delay = min(
+            self._retry_policy.initial_delay_s
+            * (self._retry_policy.backoff_multiplier ** (failed_attempt - 1)),
+            self._retry_policy.max_delay_s,
+        )
+        delay = (
+            random.uniform(0.0, base_delay)
+            if self._retry_policy.jitter
+            else base_delay
+        )
+        time.sleep(delay)
 
     def _parse_response(
         self, data: Any, consumed_modalities: list[str]
