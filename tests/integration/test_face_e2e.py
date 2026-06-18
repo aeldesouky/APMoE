@@ -12,6 +12,8 @@ synthetic PNG bytes generated in-memory).
 from __future__ import annotations
 
 import io
+import math
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -23,6 +25,10 @@ from apmoe.experts.builtin import FaceAgeExpert
 from apmoe.modality.builtin.image import ImageProcessor
 from apmoe.processing.builtin.image_anonymizers import ImageAnonymizer
 from apmoe.processing.builtin.image_cleaners import ImageCleaner
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PYTORCH_FACE_MODEL = PROJECT_ROOT / "src" / "apmoe" / "weights" / "mobilenet_age_model.pth.zip"
 
 
 # ---------------------------------------------------------------------------
@@ -48,6 +54,7 @@ def _build_mock_expert(predicted_age: float = 30.0) -> FaceAgeExpert:
     mock_model = MagicMock()
     mock_model.predict.return_value = np.array([[predicted_age]], dtype=np.float32)
     expert._model = mock_model
+    expert._backend = "keras"
     return expert
 
 
@@ -154,6 +161,27 @@ class TestFaceAgeE2E:
         png = _make_png_bytes(64, 64, "RGB")
         output = self._run_pipeline(png, expected_age=35.0)
         assert "Face Age Prediction" in output.metadata["model"]
+
+    def test_real_pytorch_face_model_runs_inference(self) -> None:
+        if not PYTORCH_FACE_MODEL.exists():
+            pytest.skip(f"PyTorch face model not found: {PYTORCH_FACE_MODEL}")
+        pytest.importorskip("torch")
+
+        proc = ImageProcessor()
+        cleaner = ImageCleaner()
+        anon = ImageAnonymizer()
+        expert = FaceAgeExpert()
+        expert.load_weights(str(PYTORCH_FACE_MODEL))
+
+        cleaned = anon.anonymize(cleaner.clean(proc.preprocess(_make_png_bytes(96, 96, "RGB"))))
+        output = expert.predict({"image": cleaned})
+
+        assert expert.is_loaded is True
+        assert math.isfinite(output.predicted_age)
+        assert 1.0 <= output.predicted_age <= 120.0
+        assert output.confidence == -1.0
+        assert output.metadata["backend"] == "pytorch"
+        assert "PyTorch MobileNetV3" in output.metadata["model"]
 
 
 # ---------------------------------------------------------------------------

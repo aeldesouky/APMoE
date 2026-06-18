@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import hashlib
+import sys
+import types
+from pathlib import Path
 
+import numpy as np
 import pytest
 
 from apmoe.core.config import ExpertConfig, ModalityConfig, PipelineConfig, SecurityConfig
 from apmoe.core.exceptions import ExpertError
 from apmoe.core.types import EmbeddingResult, ExpertOutput, ModalityData, ProcessedInput
 from apmoe.experts.base import ExpertPlugin
+from apmoe.experts.builtin import FaceAgeExpert
 from apmoe.experts.registry import ExpertRegistry, expert_registry
 
 
@@ -178,6 +183,83 @@ class TestExpertPluginABC:
     def test_concrete_subclass_instantiates(self) -> None:
         expert = _VisualExpert()
         assert expert.name == "visual_expert"
+
+
+class TestFaceAgeExpertPyTorchInference:
+    def test_keras_h5_suffixes_load_via_tensorflow(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        calls: list[str] = []
+
+        def _load_model(path: str) -> object:
+            calls.append(path)
+            return object()
+
+        fake_tf = types.SimpleNamespace(
+            keras=types.SimpleNamespace(
+                models=types.SimpleNamespace(load_model=_load_model),
+            ),
+        )
+        monkeypatch.setitem(sys.modules, "tensorflow", fake_tf)
+
+        for suffix in (".h5", ".hdf5"):
+            weights = tmp_path / f"face{suffix}"
+            weights.write_bytes(b"placeholder")
+            expert = FaceAgeExpert()
+
+            expert.load_weights(str(weights))
+
+            assert expert.is_loaded is True
+            assert expert._backend == "keras"
+            assert calls[-1] == str(weights)
+
+    def test_pytorch_predict_uses_channel_first_batch_and_clamps(self) -> None:
+        torch = pytest.importorskip("torch")
+
+        class _CaptureModel:
+            def __init__(self) -> None:
+                self.seen_shape: tuple[int, ...] | None = None
+
+            def __call__(self, batch):  # type: ignore[no-untyped-def]
+                self.seen_shape = tuple(batch.shape)
+                return torch.tensor([[130.2]], dtype=torch.float32)
+
+        model = _CaptureModel()
+        expert = FaceAgeExpert()
+        expert._model = model
+        expert._backend = "pytorch"
+        image = ModalityData(
+            modality="image",
+            data=np.zeros((200, 200, 3), dtype=np.float32),
+        )
+
+        output = expert.predict({"image": image})
+
+        assert model.seen_shape == (1, 3, 200, 200)
+        assert output.predicted_age == 120.0
+        assert output.confidence == -1.0
+        assert output.metadata["backend"] == "pytorch"
+        assert "PyTorch MobileNetV3" in output.metadata["model"]
+
+    def test_pytorch_predict_wraps_model_failures(self) -> None:
+        pytest.importorskip("torch")
+
+        class _FailingModel:
+            def __call__(self, batch):  # type: ignore[no-untyped-def]
+                raise RuntimeError("boom")
+
+        expert = FaceAgeExpert()
+        expert._model = _FailingModel()
+        expert._backend = "pytorch"
+        image = ModalityData(
+            modality="image",
+            data=np.zeros((200, 200, 3), dtype=np.float32),
+        )
+
+        with pytest.raises(ExpertError, match="PyTorch inference failed"):
+            expert.predict({"image": image})
 
     def test_declared_modalities_single(self) -> None:
         expert = _VisualExpert()
