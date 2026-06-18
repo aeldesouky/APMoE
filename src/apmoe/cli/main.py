@@ -341,7 +341,7 @@ def cli() -> None:
     help="Copy bundled face and keystroke built-in models into the generated project's weights directory.",
 )
 def init(project_name: str, builtin: bool) -> None:
-    r"""Scaffold a new APMoE project directory.
+    """Scaffold a new APMoE project directory.
 
     Creates PROJECT_NAME/ with a config template wired to the built-in Keras
     and ONNX experts, bundled default weights, starter stubs for every major
@@ -350,7 +350,12 @@ def init(project_name: str, builtin: bool) -> None:
     \b
     Files created:
       config.json                        — minimal configuration template
+      custom_processor.py                — placeholder for optional custom processors
+      custom_cleaner.py                  — placeholder for optional custom cleaners
+      custom_anonymizer.py               — placeholder for optional custom anonymizers
+      custom_embedder.py                 — placeholder for optional custom embedders
       custom_expert.py                   — placeholder for optional custom experts
+      custom_aggregator.py               — placeholder for optional custom aggregators
       weights/keystroke_age_expert.onnx  — default keystroke age model
       weights/keystroke_constants.json   — keystroke feature constants
       weights/face_age_expert.keras      — default face age model
@@ -451,7 +456,8 @@ def init(project_name: str, builtin: bool) -> None:
 @click.option(
     "--host",
     default=None,
-    help="Override serving host (env: APMOE_SERVING_HOST).",
+    help="Host to bind the API server to (e.g. 0.0.0.0 for all interfaces). "
+    "Overrides config and APMOE_SERVING_HOST env.",
 )
 @click.option(
     "--port",
@@ -480,7 +486,7 @@ def serve(
     workers: int | None,
     log_level: str | None,
 ) -> None:
-    r"""Load pretrained models and start the APMoE API server.
+    """Load pretrained models and start the APMoE API server.
 
     The server exposes:
 
@@ -554,9 +560,10 @@ def serve(
     required=True,
     type=click.Path(exists=True),
     help=(
-        "Input path.  A directory: files whose name stem matches a configured "
-        "modality are used (e.g. 'visual.jpg' for the 'visual' modality).  "
-        "A .json manifest file: maps modality names to file paths."
+        "Input path. A directory: expects a test directory. If manifest.json "
+        "exists, it will be used. Otherwise falls back to file stem matching "
+        "(e.g. 'image.jpg' for 'image' modality). A .json manifest file: "
+        "explicitly maps modality names to file paths."
     ),
 )
 @click.option(
@@ -567,19 +574,24 @@ def serve(
     help="Write the prediction JSON to this file instead of printing to stdout.",
 )
 def predict(config: str, input_path: str, output: str | None) -> None:
-    r"""Run inference on local files.
+    """Run inference on local files.
+
+    Directory input — expects a test directory containing files.
+    If a `manifest.json` is provided inside the directory, APMoE will use it
+    to map modality names to paths.
+    If no manifest is provided, APMoE falls back to searching for files named
+    exactly after the modalities (e.g. `image.jpg` or `keystroke.json`).
 
     \b
-    Directory input — scan for files whose name stem matches a configured
-    modality name (e.g. 'visual.jpg' is used for the 'visual' modality):
-
       data/
-        visual.jpg    ->  visual modality
-        audio.wav     ->  audio modality
+        manifest.json   (optional)
+        image.jpg       -> image modality
+        keystroke.json  -> keystroke modality
 
-    JSON manifest input — a .json file that maps modality names to paths:
+    JSON manifest input — you can also explicitly pass a .json file:
 
-      {"visual": "face.jpg", "audio": "recording.wav"}
+    \b
+      {"image": "data/face.jpg", "keystroke": "data/typing.json"}
 
     The resulting Prediction is printed as JSON, or written to --output.
     """
@@ -602,13 +614,19 @@ def predict(config: str, input_path: str, output: str | None) -> None:
     input_p = Path(input_path)
     inputs: dict[str, Any] = {}
 
+    manifest_file = None
     if input_p.is_file() and input_p.suffix.lower() == ".json":
+        manifest_file = input_p
+    elif input_p.is_dir() and (input_p / "manifest.json").is_file():
+        manifest_file = input_p / "manifest.json"
+
+    if manifest_file:
         # JSON manifest: {"modality": "path/to/file"}
         try:
-            manifest: dict[str, str] = json.loads(input_p.read_text(encoding="utf-8"))
+            manifest: dict[str, str] = json.loads(manifest_file.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError) as exc:
             click.echo(
-                click.style(f"Cannot read manifest '{input_p}': {exc}", fg="red"),
+                click.style(f"Cannot read manifest '{manifest_file}': {exc}", fg="red"),
                 err=True,
             )
             sys.exit(1)
@@ -624,6 +642,8 @@ def predict(config: str, input_path: str, output: str | None) -> None:
                 )
                 continue
             file_p = Path(file_path_str)
+            if not file_p.is_absolute():
+                file_p = manifest_file.parent / file_p
             if not file_p.exists():
                 click.echo(
                     click.style(f"Warning: '{file_p}' not found; skipping.", fg="yellow"),
@@ -647,13 +667,13 @@ def predict(config: str, input_path: str, output: str | None) -> None:
             err=True,
         )
         sys.exit(1)
-
     if not inputs:
+        example_mod = sorted(configured_modalities)[0] if configured_modalities else "visual"
         click.echo(
             click.style(
                 f"No matching files found in '{input_path}' for modalities "
-                f"{sorted(configured_modalities)}.  "
-                "Name files after their modality (e.g. 'visual.jpg' for 'visual').",
+                f"{sorted(configured_modalities)}. At least one modality file must be provided. "
+                f"Name files after their modality (e.g. '{example_mod}.jpg' for '{example_mod}').",
                 fg="red",
             ),
             err=True,
@@ -705,7 +725,7 @@ def predict(config: str, input_path: str, output: str | None) -> None:
     help="Path to the JSON configuration file.",
 )
 def validate(config: str) -> None:
-    r"""Validate a configuration file and verify all components are ready.
+    """Validate a configuration file and verify all components are ready.
 
     Checks:
 
