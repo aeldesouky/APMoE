@@ -33,6 +33,10 @@
       "port":    8000,
       "workers": 1,
       "log_level": "info"
+    },
+      "security": {
+      "remote_enforce_https": false,
+      "remote_allow_private_networks": true
     }
   }
 }
