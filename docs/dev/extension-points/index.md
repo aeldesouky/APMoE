@@ -79,6 +79,37 @@ Use Option B when you want short, readable config keys and are sure the module
 is imported before the framework bootstraps (e.g. via an entry point or an
 explicit `import myproject.processors` at startup).
 
+### Option C - Package entry points
+
+Installed Python packages can expose components through APMoE entry points.
+The framework discovers these during `APMoEApp.from_config()` and registers
+each entry-point name as the short config key.
+
+```toml
+[project.entry-points."apmoe.experts"]
+my_expert = "my_package.experts:MyExpert"
+
+[project.entry-points."apmoe.aggregators"]
+my_aggregator = "my_package.aggregation:MyAggregator"
+```
+
+Supported groups:
+
+| Group | Expected base class |
+|---|---|
+| `apmoe.modality_processors` | `ModalityProcessor` |
+| `apmoe.cleaners` | `CleanerStrategy` |
+| `apmoe.anonymizers` | `AnonymizerStrategy` |
+| `apmoe.embedders` | `EmbedderStrategy` |
+| `apmoe.experts` | `ExpertPlugin` |
+| `apmoe.aggregators` | `AggregatorStrategy` |
+
+Then use the short entry-point name in config:
+
+```json
+{ "class": "my_expert" }
+```
+
 ---
 
 ## Processing chain order

@@ -42,6 +42,7 @@ from apmoe.aggregation.base import AggregatorStrategy, aggregator_registry
 from apmoe.core.config import FrameworkConfig, load_config
 from apmoe.core.exceptions import ConfigurationError, ServingError
 from apmoe.core.pipeline import InferencePipeline, ModalityChain
+from apmoe.core.plugins import discover_plugin_entry_points
 from apmoe.core.registry import legacy_dotted_import_alias
 from apmoe.core.security import ensure_correlation_id, redact_value
 from apmoe.core.types import Prediction
@@ -135,6 +136,7 @@ class APMoEApp:
         # 1. Load and validate config
         cfg = load_config(path)
         apmoe_cfg = cfg.apmoe
+        discover_plugin_entry_points()
 
         # 2. Build modality processors
         processors = ModalityProcessorFactory.from_configs(apmoe_cfg.modalities)
@@ -230,6 +232,7 @@ class APMoEApp:
             aggregator=aggregator,
             confidence_threshold=apmoe_cfg.confidence_threshold,
             expert_failure_policy=apmoe_cfg.expert_failure_policy,
+            remote_fallback_policy=apmoe_cfg.remote_fallback_policy,
         )
 
         return cls(
@@ -495,6 +498,7 @@ class APMoEApp:
             "security": redact_value(self._config.apmoe.security.model_dump()),
             "confidence_threshold": self._config.apmoe.confidence_threshold,
             "expert_failure_policy": self._config.apmoe.expert_failure_policy,
+            "remote_fallback_policy": self._config.apmoe.remote_fallback_policy,
             "remote_retry": self._config.apmoe.remote_retry.model_dump(),
             "remote_circuit_breaker": self._config.apmoe.remote_circuit_breaker.model_dump(),
         }

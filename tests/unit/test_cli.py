@@ -13,8 +13,10 @@ Covers:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -22,7 +24,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from apmoe.cli.main import cli
+import apmoe.core.models as models
+from apmoe.cli.main import _should_download_demo_models, cli
+from apmoe.core.config import load_config
 from apmoe.core.exceptions import APMoEError, ConfigurationError, PipelineError
 from apmoe.core.types import ExpertOutput, Prediction
 
@@ -65,6 +69,28 @@ def _minimal_config_data() -> dict[str, Any]:
             },
         }
     }
+
+
+def _remote_fallback_config_data() -> dict[str, Any]:
+    """Return a schema-valid config with a remote primary and local fallback."""
+    data = _minimal_config_data()
+    data["apmoe"]["experts"] = [
+        {
+            "name": "remote_face",
+            "class": "apmoe.experts.remote.RemoteExpert",
+            "endpoint": "https://models.example.com/predict",
+            "modalities": ["visual"],
+            "fallback_expert": "local_face_standby",
+        },
+        {
+            "name": "local_face_standby",
+            "class": "myproject.experts.FaceExpert",
+            "weights": "./weights/face.pt",
+            "modalities": ["visual"],
+            "fallback_only": True,
+        },
+    ]
+    return data
 
 
 def _make_prediction(age: float = 30.0, confidence: float = 0.9) -> Prediction:
@@ -268,6 +294,167 @@ class TestInitCommand:
             result = runner.invoke(cli, ["init", "proj"])
             assert "Next steps" in result.output
 
+    def test_output_mentions_local_only_default(self, tmp_path: Path) -> None:
+        """The scaffold output makes the local-only default explicit."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            result = runner.invoke(cli, ["init", "proj"])
+            assert "Expert mode: local-only (default)" in result.output
+
+    @patch("apmoe.core.models.download_model_artifacts")
+    def test_init_download_models_flag_acquires_artifacts(
+        self,
+        mock_download: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """``--download-models`` acquires artifacts without prompting."""
+        mock_download.return_value = [Path("weights/fake_model.bin")]
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            result = runner.invoke(cli, ["init", "proj", "--download-models"])
+
+        assert result.exit_code == 0, result.output
+        mock_download.assert_called_once()
+        assert "fake_model.bin" in result.output
+
+    @patch("click.confirm")
+    def test_init_prompt_decision_uses_terminal_confirmation(
+        self,
+        mock_confirm: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Interactive ``init`` asks before acquiring demo models."""
+        mock_confirm.return_value = True
+        monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+
+        assert _should_download_demo_models(builtin=False, download_models=None) is True
+        mock_confirm.assert_called_once()
+
+    @patch("click.confirm")
+    def test_init_prompt_decision_skips_prompt_when_non_interactive(
+        self,
+        mock_confirm: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Non-interactive ``init`` keeps automation quiet by default."""
+        monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+
+        assert _should_download_demo_models(builtin=False, download_models=None) is False
+        mock_confirm.assert_not_called()
+
+    def test_init_no_download_models_flag_suppresses_builtin_prompt(
+        self,
+    ) -> None:
+        """``--no-download-models`` gives scripts an explicit opt-out."""
+        assert _should_download_demo_models(builtin=False, download_models=False) is False
+        assert _should_download_demo_models(builtin=True, download_models=False) is True
+
+
+# ---------------------------------------------------------------------------
+# apmoe download-models
+# ---------------------------------------------------------------------------
+
+
+class TestDownloadModelsCommand:
+    """Tests for explicit model artifact acquisition."""
+
+    def _install_fake_catalog(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        expected_sha: str,
+    ) -> None:
+        artifact = models.ModelArtifact(
+            key="fake",
+            model="face",
+            filename="fake_model.bin",
+            sha256=expected_sha,
+            size_bytes=11,
+            source_url=None,
+            license_note="test artifact",
+        )
+        monkeypatch.setattr(models, "MODEL_ARTIFACTS", (artifact,))
+
+    def test_download_models_copies_from_source_dir(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        source = tmp_path / "source"
+        source.mkdir()
+        payload = b"model-bytes"
+        (source / "fake_model.bin").write_bytes(payload)
+        expected_sha = hashlib.sha256(payload).hexdigest()
+        self._install_fake_catalog(monkeypatch, expected_sha=expected_sha)
+        monkeypatch.setenv("APMOE_MODEL_SOURCE_DIR", str(source))
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["download-models", "--dest", str(tmp_path / "weights"), "--model", "face"],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert (tmp_path / "weights" / "fake_model.bin").read_bytes() == payload
+        assert "fake_model.bin" in result.output
+
+    def test_download_models_reports_checksum_mismatch(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        source = tmp_path / "source"
+        source.mkdir()
+        (source / "fake_model.bin").write_bytes(b"unexpected")
+        self._install_fake_catalog(monkeypatch, expected_sha="0" * 64)
+        monkeypatch.setenv("APMOE_MODEL_SOURCE_DIR", str(source))
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["download-models", "--dest", str(tmp_path / "weights"), "--model", "face"],
+        )
+
+        assert result.exit_code != 0
+        assert "Checksum mismatch" in result.output
+        assert not (tmp_path / "weights" / "fake_model.bin").exists()
+
+    def test_download_models_skips_existing_file(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        target = tmp_path / "weights"
+        target.mkdir()
+        (target / "fake_model.bin").write_bytes(b"already-here")
+        self._install_fake_catalog(monkeypatch, expected_sha="0" * 64)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["download-models", "--dest", str(target), "--model", "face"],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert (target / "fake_model.bin").read_bytes() == b"already-here"
+        assert "already exist" in result.output
+
+    def test_download_models_missing_source_exits_nonzero(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        self._install_fake_catalog(monkeypatch, expected_sha="0" * 64)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["download-models", "--dest", str(tmp_path / "weights"), "--model", "face"],
+        )
+
+        assert result.exit_code != 0
+        assert "No source is configured" in result.output
+
 
 # ---------------------------------------------------------------------------
 # apmoe serve
@@ -317,6 +504,23 @@ class TestServeCommand:
         runner.invoke(cli, ["serve", "--config", str(cfg_path)])
 
         mock_instance.serve.assert_called_once()
+
+    @patch("apmoe.core.app.APMoEApp")
+    def test_serve_displays_expert_summary(
+        self, mock_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        """``serve`` prints local/remote expert mode before starting."""
+        cfg_path = _write_config(tmp_path / "config.json", _minimal_config_data())
+        mock_instance = _make_mock_app()
+        mock_instance.config = load_config(cfg_path)
+        mock_cls.from_config.return_value = mock_instance
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["serve", "--config", str(cfg_path)])
+
+        assert result.exit_code == 0
+        assert "Expert mode: local-only (default)" in result.output
+        assert "[local]" in result.output
 
     @patch("apmoe.core.app.APMoEApp")
     def test_host_override_sets_env_var(
@@ -596,6 +800,33 @@ class TestPredictCommand:
         )
         assert result.exit_code != 0
 
+    @patch("apmoe.core.app.APMoEApp")
+    def test_predict_displays_remote_fallback_summary_without_breaking_json(
+        self, mock_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        """``predict`` reports expert DX while still printing parseable JSON."""
+        cfg_path = _write_config(tmp_path / "config.json", _remote_fallback_config_data())
+        input_dir = tmp_path / "data"
+        input_dir.mkdir()
+        (input_dir / "visual.jpg").write_bytes(b"\xff\xd8")
+
+        mock_instance = _make_mock_app()
+        mock_instance.config = load_config(cfg_path)
+        mock_cls.from_config.return_value = mock_instance
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli, ["predict", "--config", str(cfg_path), "--input", str(input_dir)]
+        )
+
+        assert result.exit_code == 0
+        assert "Expert mode: mixed with local fallbacks" in result.output
+        assert "[remote]" in result.output
+        assert "[local fallback]" in result.output
+        json_start = result.output.index("{")
+        parsed = json.loads(result.output[json_start:])
+        assert parsed["predicted_age"] == pytest.approx(30.0)
+
 
 # ---------------------------------------------------------------------------
 # apmoe validate
@@ -713,6 +944,30 @@ class TestValidateCommand:
         runner = CliRunner()
         result = runner.invoke(cli, ["validate", "--config", str(cfg_path)])
         assert "no experts" in result.output.lower()
+
+    @patch("apmoe.core.app.APMoEApp")
+    def test_validate_displays_remote_and_fallback_experts(
+        self, mock_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        """``validate`` labels remote primaries and standby local fallbacks."""
+        cfg_path = _write_config(tmp_path / "config.json", _remote_fallback_config_data())
+        mock_instance = _make_mock_app()
+        mock_instance.config = load_config(cfg_path)
+        mock_instance.validate.return_value = {
+            "valid": True,
+            "expert_health": {"remote_face": True, "local_face_standby": True},
+            "issues": [],
+        }
+        mock_cls.from_config.return_value = mock_instance
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["validate", "--config", str(cfg_path)])
+
+        assert result.exit_code == 0
+        assert "Expert mode: mixed with local fallbacks" in result.output
+        assert "[remote]" in result.output
+        assert "[local fallback]" in result.output
+        assert "fallback_for=remote_face" in result.output
 
 
 # ---------------------------------------------------------------------------

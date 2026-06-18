@@ -158,6 +158,7 @@ class InferencePipeline:
     aggregator: AggregatorStrategy
     confidence_threshold: float | None = None
     expert_failure_policy: str = "fail_fast"
+    remote_fallback_policy: str = "transient_only"
     on_before_process: list[OnBeforeProcess] = field(default_factory=list)
     on_after_embed: list[OnAfterEmbed] = field(default_factory=list)
     on_after_expert: list[OnAfterExpert] = field(default_factory=list)
@@ -398,6 +399,109 @@ class InferencePipeline:
 
         return processed, failed
 
+    def _remote_error_is_fallback_eligible(
+        self,
+        expert_name: str,
+        exc: ExpertError,
+    ) -> bool:
+        """Return whether a remote expert failure should use paired fallback."""
+        if self.remote_fallback_policy == "disabled":
+            return False
+        if not self.expert_registry.is_remote(expert_name):
+            return False
+        if self.expert_registry.fallback_for(expert_name) is None:
+            return False
+        if self.remote_fallback_policy == "any_remote_error":
+            return True
+
+        context = getattr(exc, "context", {}) or {}
+        status_code = context.get("status_code")
+        if status_code in {429, 502, 503, 504}:
+            return True
+        if context.get("circuit_state") == "open":
+            return True
+
+        message = str(exc).lower()
+        transient_markers = (
+            "timed out",
+            "timeout",
+            "network error",
+            "circuit breaker is open",
+            "request failed after",
+        )
+        return any(marker in message for marker in transient_markers)
+
+    def _attempt_remote_fallback(
+        self,
+        expert_name: str,
+        expert_inputs: dict[str, ProcessedInput],
+        exc: ExpertError,
+        fallback_events: list[dict[str, Any]],
+        failed_experts: dict[str, str],
+    ) -> ExpertOutput | None:
+        """Try a configured local fallback for a failed remote expert."""
+        if not self._remote_error_is_fallback_eligible(expert_name, exc):
+            return None
+
+        fallback_name = self.expert_registry.fallback_for(expert_name)
+        if fallback_name is None:
+            return None
+
+        try:
+            fallback = self.expert_registry.get(fallback_name)
+        except ExpertError as fallback_lookup_error:
+            failed_experts[fallback_name] = str(fallback_lookup_error)
+            return None
+
+        fallback_inputs = {
+            mod: expert_inputs[mod]
+            for mod in fallback.declared_modalities()
+            if mod in expert_inputs
+        }
+        missing = set(fallback.declared_modalities()) - set(fallback_inputs)
+        if missing:
+            failed_experts[fallback_name] = (
+                "Fallback expert is missing processed modalities: "
+                f"{sorted(missing)}"
+            )
+            return None
+
+        try:
+            fallback_output = fallback.predict(fallback_inputs)
+        except ExpertError as fallback_error:
+            failed_experts[fallback_name] = str(fallback_error)
+            return None
+        except Exception as fallback_error:  # noqa: BLE001
+            failed_experts[fallback_name] = (
+                f"Fallback expert '{fallback_name}' raised an unhandled exception: "
+                f"{fallback_error}"
+            )
+            return None
+
+        event = {
+            "remote_expert": expert_name,
+            "fallback_expert": fallback_name,
+            "policy": self.remote_fallback_policy,
+            "reason": str(exc),
+        }
+        fallback_events.append(event)
+        failed_experts[expert_name] = str(exc)
+        metadata = {
+            **fallback_output.metadata,
+            "backend": "local",
+            "fallback_for": expert_name,
+            "fallback_expert": fallback_name,
+            "actual_expert_name": fallback_output.expert_name,
+            "fallback_reason": str(exc),
+        }
+        return ExpertOutput(
+            expert_name=expert_name,
+            consumed_modalities=fallback_output.consumed_modalities,
+            predicted_age=fallback_output.predicted_age,
+            confidence=fallback_output.confidence,
+            metadata=metadata,
+        )
+
     def _phase_b(
         self,
         processed: dict[str, ProcessedInput],
@@ -440,6 +544,7 @@ class InferencePipeline:
 
         expert_outputs: list[ExpertOutput] = []
         failed_experts: dict[str, str] = {}
+        fallback_events: list[dict[str, Any]] = []
         for expert in runnable:
             expert_inputs = {
                 mod: processed[mod]
@@ -449,7 +554,14 @@ class InferencePipeline:
             try:
                 output = expert.predict(expert_inputs)
             except ExpertError as exc:
-                if self.expert_failure_policy == "skip_failed":
+                output = self._attempt_remote_fallback(
+                    expert.name,
+                    expert_inputs,
+                    exc,
+                    fallback_events,
+                    failed_experts,
+                )
+                if output is None and self.expert_failure_policy == "skip_failed":
                     failed_experts[expert.name] = str(exc)
                     logger.error(
                         "Expert '%s' failed during inference and will be skipped: %s",
@@ -458,13 +570,21 @@ class InferencePipeline:
                         exc_info=True,
                     )
                     continue
-                raise
+                if output is None:
+                    raise
             except Exception as exc:  # noqa: BLE001
                 wrapped = ExpertError(
                     f"Expert '{expert.name}' raised an unhandled exception: {exc}",
                     context={"expert": expert.name},
                 )
-                if self.expert_failure_policy == "skip_failed":
+                output = self._attempt_remote_fallback(
+                    expert.name,
+                    expert_inputs,
+                    wrapped,
+                    fallback_events,
+                    failed_experts,
+                )
+                if output is None and self.expert_failure_policy == "skip_failed":
                     failed_experts[expert.name] = str(wrapped)
                     logger.error(
                         "Expert '%s' raised an unhandled exception and will be skipped: %s",
@@ -473,7 +593,8 @@ class InferencePipeline:
                         exc_info=True,
                     )
                     continue
-                raise wrapped from exc
+                if output is None:
+                    raise wrapped from exc
 
             expert_outputs.append(output)
             self._run_hooks(self.on_after_expert, output)
@@ -505,6 +626,7 @@ class InferencePipeline:
                 "available_modalities": sorted(available),
                 "failed_modalities": failed_modalities,
                 "failed_experts": failed_experts,
+                "fallback_experts": fallback_events,
             },
         )
 

@@ -244,6 +244,9 @@ class ExpertRegistry:
     def __init__(self) -> None:
         """Initialise an empty instance registry."""
         self._experts: dict[str, ExpertPlugin] = {}
+        self._backends: dict[str, str] = {}
+        self._fallback_targets: dict[str, str] = {}
+        self._fallback_only: set[str] = set()
 
     # ------------------------------------------------------------------
     # Registration
@@ -268,6 +271,21 @@ class ExpertRegistry:
                 context={"expert": key},
             )
         self._experts[key] = instance
+
+    def set_expert_metadata(
+        self,
+        name: str,
+        *,
+        backend: str,
+        fallback_expert: str | None = None,
+        fallback_only: bool = False,
+    ) -> None:
+        """Store config-derived runtime metadata for an expert instance."""
+        self._backends[name] = backend
+        if fallback_expert is not None:
+            self._fallback_targets[name] = fallback_expert
+        if fallback_only:
+            self._fallback_only.add(name)
 
     # ------------------------------------------------------------------
     # Lookup
@@ -310,6 +328,29 @@ class ExpertRegistry:
         """
         return list(self._experts.values())
 
+    def backend_for(self, name: str) -> str:
+        """Return ``local`` or ``remote`` for an expert name."""
+        return self._backends.get(name, "local")
+
+    def is_remote(self, name: str) -> bool:
+        """Return whether *name* identifies a remote expert."""
+        return self.backend_for(name) == "remote"
+
+    def is_fallback_only(self, name: str) -> bool:
+        """Return whether *name* is a standby local fallback expert."""
+        return name in self._fallback_only
+
+    def fallback_for(self, name: str) -> str | None:
+        """Return the local fallback expert name configured for *name*, if any."""
+        return self._fallback_targets.get(name)
+
+    def fallback_parent_for(self, fallback_name: str) -> str | None:
+        """Return the remote expert that uses *fallback_name*, if any."""
+        for remote_name, target_name in self._fallback_targets.items():
+            if target_name == fallback_name:
+                return remote_name
+        return None
+
     # ------------------------------------------------------------------
     # Modality dispatch
     # ------------------------------------------------------------------
@@ -333,7 +374,9 @@ class ExpertRegistry:
             can run (i.e. all their declared modalities are available).
         """
         runnable: list[ExpertPlugin] = []
-        for expert in self._experts.values():
+        for name, expert in self._experts.items():
+            if self.is_fallback_only(name):
+                continue
             required = set(expert.declared_modalities())
             if required.issubset(available_modalities):
                 runnable.append(expert)
@@ -353,6 +396,8 @@ class ExpertRegistry:
         """
         skipped: list[str] = []
         for name, expert in self._experts.items():
+            if self.is_fallback_only(name):
+                continue
             required = set(expert.declared_modalities())
             if not required.issubset(available_modalities):
                 skipped.append(name)
@@ -586,6 +631,12 @@ class ExpertRegistry:
                 ) from exc
 
             registry.register_instance(instance)
+            registry.set_expert_metadata(
+                instance.name,
+                backend="remote" if is_remote else "local",
+                fallback_expert=expert_cfg.fallback_expert,
+                fallback_only=expert_cfg.fallback_only,
+            )
 
         return registry
 

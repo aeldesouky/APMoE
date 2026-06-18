@@ -100,6 +100,12 @@ Expert names must be **unique** across the list.
 | `modalities` | array of strings | ✅ | One or more modality names this expert consumes. Every name must appear in `modalities[].name`. An expert may consume a single modality **or** multiple (multi-modal expert). Must not be empty. |
 | *(any extra key)* | any | ❌ | Additional expert-specific parameters (e.g. `"threshold"`, `"temperature"`) are collected into an `extra` dict and passed to the expert at bootstrap. |
 
+Local experts use `weights`; remote experts use `endpoint`. The two fields are
+mutually exclusive. Remote experts may set `fallback_expert` to name a standby
+local expert that has `fallback_only=true`. Fallback-only experts load at
+startup and appear in CLI health output, but they are excluded from normal
+inference unless their paired remote expert fails.
+
 ### Model artifact integrity
 
 Local experts may pin a SHA-256 digest for the configured `weights` file:
@@ -184,6 +190,36 @@ The expert is responsible for combining them internally.
 `temperature` and `threshold` land in `expert_config.extra` and are available
 to the constructor of `CalibratedCNNExpert`.
 
+### Remote primary with local fallback
+
+Pair a remote expert with a standby local expert when a degraded local
+prediction is preferable to failing during a remote outage:
+
+```json
+{
+  "experts": [
+    {
+      "name": "remote_face",
+      "class": "apmoe.experts.remote.RemoteExpert",
+      "endpoint": "https://models.example.com/predict",
+      "modalities": ["image"],
+      "fallback_expert": "local_face_standby"
+    },
+    {
+      "name": "local_face_standby",
+      "class": "apmoe.experts.builtin.FaceAgeExpert",
+      "weights": "./weights/face_age_expert.keras",
+      "modalities": ["image"],
+      "fallback_only": true
+    }
+  ]
+}
+```
+
+The fallback expert receives the same processed modality inputs as the remote
+primary, so both experts must be compatible with the configured modality
+pipeline.
+
 ---
 
 ## `aggregation` — object, required
@@ -228,6 +264,7 @@ experts or individual runnable experts fail:
 {
   "apmoe": {
     "expert_failure_policy": "fail_fast",
+    "remote_fallback_policy": "transient_only",
     "remote_retry": {
       "max_attempts": 3,
       "initial_delay_s": 0.25,
@@ -247,6 +284,7 @@ experts or individual runnable experts fail:
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `expert_failure_policy` | string | `"fail_fast"` | `"fail_fast"` preserves historical behavior: any runnable expert failure aborts prediction. `"skip_failed"` records failed runnable experts in `Prediction.metadata["failed_experts"]` and aggregates the remaining successful outputs. If every runnable expert fails, the pipeline raises `PipelineError`. |
+| `remote_fallback_policy` | string | `"transient_only"` | Paired remote-to-local fallback behavior. `"transient_only"` falls back on timeout, network error, transient HTTP `429/502/503/504`, and open circuit. `"any_remote_error"` falls back on any remote `ExpertError`. `"disabled"` never uses paired fallback. |
 | `remote_retry.max_attempts` | integer | `3` | Total attempts for each remote inference call, including the first try. Must be at least 1. |
 | `remote_retry.initial_delay_s` | number | `0.25` | First retry delay in seconds. |
 | `remote_retry.max_delay_s` | number | `2.0` | Upper bound for exponential backoff delay. Must be greater than or equal to `initial_delay_s`. |

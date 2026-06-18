@@ -307,9 +307,9 @@ Example:
 ```
 
 Retries and circuit breakers reduce the blast radius of temporary vendor
-outages. To convert a remote expert outage into a degraded prediction, combine
-remote resilience with `expert_failure_policy="skip_failed"` and at least one
-independent local or alternate remote expert.
+outages. To convert a remote expert outage into a degraded prediction, prefer
+a paired local fallback: configure the remote expert with `fallback_expert` and
+mark the local standby expert with `fallback_only=true`.
 
 APMoE remote fallback pattern:
 
@@ -317,6 +317,7 @@ APMoE remote fallback pattern:
 {
   "apmoe": {
     "expert_failure_policy": "skip_failed",
+    "remote_fallback_policy": "transient_only",
     "remote_retry": {
       "max_attempts": 2,
       "initial_delay_s": 0.2,
@@ -333,9 +334,17 @@ APMoE remote fallback pattern:
 }
 ```
 
-Use this when a remote provider is optional. If the remote provider is the only
-expert, the circuit breaker will fail fast after repeated outages, but the HTTP
-response will still be `503` because no expert remains to aggregate.
+Use `remote_fallback_policy="transient_only"` to fallback on timeouts, network
+errors, transient HTTP `429/502/503/504`, and open circuits. Use
+`"any_remote_error"` only when local fallback is acceptable for malformed remote
+responses or other provider-side errors. Use `"disabled"` when remote output is
+required.
+
+Fallback-only local experts are loaded and shown by `apmoe validate`, but they
+do not run during normal inference. When fallback succeeds, aggregation treats
+the output as the remote expert's slot so existing `aggregation.weights` remain
+stable, and the response records the actual local fallback in
+`metadata.fallback_experts`.
 
 ### Redis Fallback
 

@@ -23,11 +23,9 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
-import shutil
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-import shutil
 import click
 
 # Short and long help flags for the group and every subcommand (Click defaults to ``--help`` only).
@@ -105,6 +103,7 @@ _CONFIG_TEMPLATE: str = """\
     },
     "confidence_threshold": null,
     "expert_failure_policy": "fail_fast",
+    "remote_fallback_policy": "transient_only",
     "remote_retry": {
       "max_attempts": 3,
       "initial_delay_s": 0.25,
@@ -326,6 +325,9 @@ _README_TEMPLATE: str = """\
 
 An APMoE project for age prediction using Mixture of Experts.
 
+The generated project uses **local-only experts by default**. Add remote experts
+explicitly when you want APMoE to call external model endpoints.
+
 ## Quick Start
 
 1. **Configure**: Edit `config.json` to point to your processor, cleaner,
@@ -405,6 +407,7 @@ Remote expert security (`apmoe.security`):
 | `environment` | `"development"` | One of: development, test, staging, production |
 | `confidence_threshold` | `null` | Gate below which recommendations are added |
 | `expert_failure_policy` | `"fail_fast"` | `"fail_fast"` or `"skip_failed"` |
+| `remote_fallback_policy` | `"transient_only"` | paired remote-to-local fallback behavior |
 | `remote_retry.max_attempts` | `3` | Retries for remote expert calls |
 | `remote_circuit_breaker.enabled` | `true` | Circuit breaker for remote experts |
 
@@ -434,7 +437,7 @@ Remote expert security (`apmoe.security`):
 - Subclass `AggregatorStrategy` in `custom_aggregator.py`.
 - Implement `StatelessAuthProvider` or `AuthPlugin` in `custom_security.py`.
 - Reference your custom classes in `config.json` with dotted paths like `"custom_expert.MyCustomExpert"`.
-- See the [APMoE documentation](https://github.com/your-org/apmoe) for details.
+- See the [APMoE documentation](https://github.com/aeldesouky/APMoE/tree/main/docs) for details.
 """
 
 
@@ -458,6 +461,146 @@ def _prediction_to_json(prediction: Prediction) -> str:
     """
     d = dataclasses.asdict(prediction)
     return json.dumps(d, indent=2, default=str)
+
+
+def _expert_summary_mode(experts: list[Any]) -> str:
+    """Return a concise local/remote mode label for CLI output."""
+    active = [e for e in experts if not getattr(e, "fallback_only", False)]
+    has_remote = any(getattr(e, "endpoint", None) is not None for e in active)
+    has_local = any(getattr(e, "endpoint", None) is None for e in active)
+    has_fallbacks = any(getattr(e, "fallback_expert", None) for e in experts)
+    if has_fallbacks:
+        return "mixed with local fallbacks"
+    if has_remote and has_local:
+        return "mixed local+remote"
+    if has_remote:
+        return "remote-only"
+    return "local-only (default)"
+
+
+def _fallback_parent_name(experts: list[Any], fallback_name: str) -> str | None:
+    """Return the remote expert name that points at *fallback_name*, if any."""
+    for expert in experts:
+        if getattr(expert, "fallback_expert", None) == fallback_name:
+            return getattr(expert, "name", None)
+    return None
+
+
+def _render_expert_summary(
+    apmoe_cfg: Any,
+    *,
+    health: dict[str, bool] | None = None,
+    err: bool = False,
+) -> None:
+    """Print a CLI-facing local/remote expert summary."""
+    from apmoe.core.security import redact_url
+
+    try:
+        experts = list(apmoe_cfg.experts)
+    except TypeError:
+        return
+    if not experts:
+        click.echo("Expert mode: local-only (default)", err=err)
+        click.echo("  (no experts configured)", err=err)
+        return
+
+    retry = getattr(apmoe_cfg, "remote_retry", None)
+    circuit = getattr(apmoe_cfg, "remote_circuit_breaker", None)
+    fallback_policy = getattr(apmoe_cfg, "remote_fallback_policy", "transient_only")
+
+    click.echo(f"Expert mode: {_expert_summary_mode(experts)}", err=err)
+    click.echo(f"Remote fallback policy: {fallback_policy}", err=err)
+    for expert in experts:
+        name = getattr(expert, "name", "<unknown>")
+        endpoint = getattr(expert, "endpoint", None)
+        fallback_only = bool(getattr(expert, "fallback_only", False))
+        if fallback_only:
+            parent = _fallback_parent_name(experts, name) or "(unpaired)"
+            label = click.style("[local fallback]", fg="cyan")
+            loaded_suffix = ""
+            if health is not None:
+                loaded_suffix = " loaded=" + ("yes" if health.get(name) else "no")
+            click.echo(
+                f"  {label} {name}: weights={getattr(expert, 'weights', None)} "
+                f"fallback_for={parent} standby{loaded_suffix}",
+                err=err,
+            )
+            continue
+
+        if endpoint is not None:
+            label = click.style("[remote]", fg="magenta")
+            fallback = getattr(expert, "fallback_expert", None) or "(none)"
+            retry_text = (
+                f"retry={getattr(retry, 'max_attempts', '?')} attempts"
+                if retry is not None
+                else "retry=?"
+            )
+            circuit_text = (
+                "circuit="
+                + ("on" if getattr(circuit, "enabled", False) else "off")
+                if circuit is not None
+                else "circuit=?"
+            )
+            click.echo(
+                f"  {label} {name}: endpoint={redact_url(str(endpoint))} "
+                f"{retry_text} {circuit_text} fallback={fallback}",
+                err=err,
+            )
+        else:
+            label = click.style("[local]", fg="green")
+            loaded_suffix = ""
+            if health is not None:
+                loaded_suffix = " loaded=" + ("yes" if health.get(name) else "no")
+            click.echo(
+                f"  {label} {name}: weights={getattr(expert, 'weights', None)}{loaded_suffix}",
+                err=err,
+            )
+
+    warnings: list[str] = []
+    for expert in experts:
+        endpoint = getattr(expert, "endpoint", None)
+        if endpoint is None:
+            continue
+        if getattr(expert, "fallback_expert", None) is None:
+            warnings.append(
+                f"Remote expert '{getattr(expert, 'name', '<unknown>')}' has no fallback_expert."
+            )
+        elif fallback_policy == "disabled":
+            warnings.append(
+                f"Remote expert '{getattr(expert, 'name', '<unknown>')}' has a fallback, "
+                "but remote_fallback_policy='disabled'."
+            )
+    if health is not None:
+        for expert in experts:
+            if bool(getattr(expert, "fallback_only", False)) and not health.get(
+                getattr(expert, "name", ""),
+                False,
+            ):
+                warnings.append(
+                    f"Fallback expert '{getattr(expert, 'name', '<unknown>')}' is not loaded."
+                )
+    if warnings:
+        click.echo("Expert warnings:", err=err)
+        for warning in warnings:
+            click.echo(click.style(f"  Warning: {warning}", fg="yellow"), err=err)
+
+
+def _should_download_demo_models(
+    *,
+    builtin: bool,
+    download_models: bool | None,
+) -> bool:
+    """Return whether ``apmoe init`` should acquire demo model artifacts."""
+    if builtin:
+        return True
+    if download_models is not None:
+        return download_models
+    if not sys.stdin.isatty():
+        return False
+    return click.confirm(
+        "Download demo model artifacts for the built-in experts now?",
+        default=False,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -485,12 +628,23 @@ def cli() -> None:
 @click.option(
     "--builtin",
     is_flag=True,
-    help="Copy bundled face and keystroke built-in models into the generated project's weights directory.",
+    help=(
+        "Download or copy demo face and keystroke models into the generated "
+        "project's weights directory."
+    ),
 )
-def init(project_name: str, builtin: bool) -> None:
+@click.option(
+    "--download-models/--no-download-models",
+    default=None,
+    help=(
+        "Explicitly choose whether to acquire demo model artifacts. "
+        "When omitted in an interactive terminal, APMoE asks."
+    ),
+)
+def init(project_name: str, builtin: bool, download_models: bool | None) -> None:
     """Scaffold a new APMoE project directory.
 
-    Creates PROJECT_NAME/ with a config template covering all framework
+    Creates PROJECT_NAME/ with a local-only config template covering all framework
     features (serving, security, rate limiting, CORS, remote experts,
     circuit breaker, retry policy), starter stubs for every extension point,
     bundled default weights, and a README.
@@ -526,15 +680,35 @@ def init(project_name: str, builtin: bool) -> None:
     weights_dest = project_dir / "weights"
     weights_dest.mkdir()
 
-    # Copy default pretrained models bundled with the package if --builtin is passed.
-    _pkg_weights = Path(__file__).parent.parent / "weights"
     copied: list[str] = []
-    
-    if builtin and _pkg_weights.is_dir():
-        for src_file in sorted(_pkg_weights.iterdir()):
-            if src_file.is_file():
-                shutil.copy2(src_file, weights_dest / src_file.name)
-                copied.append(src_file.name)
+    should_download_models = _should_download_demo_models(
+        builtin=builtin,
+        download_models=download_models,
+    )
+
+    if should_download_models:
+        from apmoe.core.exceptions import ConfigurationError
+        from apmoe.core.models import download_model_artifacts
+
+        try:
+            copied = [
+                path.name
+                for path in download_model_artifacts(
+                    weights_dest,
+                    model="all",
+                    force=False,
+                    skip_existing=True,
+                )
+            ]
+        except ConfigurationError as exc:
+            click.echo(click.style("Could not acquire demo model artifacts:", fg="red"), err=True)
+            click.echo(f"  {exc}", err=True)
+            click.echo(
+                "Set APMOE_MODEL_SOURCE_DIR or run `apmoe download-models --dest weights` "
+                "after configuring a model source.",
+                err=True,
+            )
+            sys.exit(1)
 
     if not copied:
         # Fallback: write a .gitkeep so the directory is not entirely empty.
@@ -559,6 +733,7 @@ def init(project_name: str, builtin: bool) -> None:
     (project_dir / "README.md").write_text(readme_content, encoding="utf-8")
 
     click.echo(click.style(f"Created project '{project_name}/'", fg="green"))
+    click.echo("Expert mode: local-only (default)")
     click.echo(f"  {project_name}/config.json          — full config (edit to configure)")
     click.echo(f"  {project_name}/custom_processor.py  — optional ModalityProcessor stubs")
     click.echo(f"  {project_name}/custom_cleaner.py    — optional CleanerStrategy stubs")
@@ -582,6 +757,76 @@ def init(project_name: str, builtin: bool) -> None:
     click.echo(click.style("Tip:", fg="cyan") + " authentication is disabled by default.")
     click.echo("  Set \"authentication_enabled\": true in config.json and implement")
     click.echo("  StatelessAuthProvider in custom_security.py for production use.")
+
+
+# ---------------------------------------------------------------------------
+# download-models
+# ---------------------------------------------------------------------------
+
+
+@cli.command(
+    "download-models",
+    context_settings=_CLI_CONTEXT_SETTINGS,
+    short_help="Download or copy demo model artifacts.",
+)
+@click.option(
+    "--dest",
+    default="weights",
+    type=click.Path(file_okay=False, dir_okay=True),
+    show_default=True,
+    help="Directory to place model artifacts in.",
+)
+@click.option(
+    "--model",
+    "model_name",
+    default="all",
+    type=click.Choice(["all", "face", "keystroke"]),
+    show_default=True,
+    help="Model artifact group to acquire.",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Overwrite existing files after downloading or copying.",
+)
+@click.option(
+    "--skip-existing/--no-skip-existing",
+    default=True,
+    show_default=True,
+    help="Skip files that already exist unless --force is set.",
+)
+def download_models(
+    dest: str,
+    model_name: str,
+    force: bool,
+    skip_existing: bool,
+) -> None:
+    """Download or copy demo model artifacts for built-in experts."""
+    from apmoe.core.exceptions import ConfigurationError
+    from apmoe.core.models import download_model_artifacts, selected_artifacts
+
+    try:
+        written = download_model_artifacts(
+            dest,
+            model=model_name,  # type: ignore[arg-type]
+            force=force,
+            skip_existing=skip_existing,
+        )
+    except ConfigurationError as exc:
+        click.echo(click.style("Model acquisition failed:", fg="red"), err=True)
+        click.echo(f"  {exc}", err=True)
+        sys.exit(1)
+
+    selected = selected_artifacts(model_name)  # type: ignore[arg-type]
+    click.echo(click.style(f"Model directory ready: {Path(dest)}", fg="green"))
+    if written:
+        for path in written:
+            click.echo(f"  wrote {path.name}")
+    else:
+        click.echo("  no files written; selected artifacts already exist")
+    click.echo("Artifacts:")
+    for artifact in selected:
+        click.echo(f"  {artifact.filename} ({artifact.size_bytes} bytes)")
 
 
 # ---------------------------------------------------------------------------
@@ -666,6 +911,8 @@ def serve(
         sys.exit(1)
 
     serving_cfg = app.config.apmoe.serving
+    _render_expert_summary(app.config.apmoe)
+    click.echo()
     click.echo(
         click.style(
             f"Starting APMoE server on http://{serving_cfg.host}:{serving_cfg.port}",
@@ -832,6 +1079,8 @@ def predict(config: str, input_path: str, output: str | None) -> None:
         click.echo(click.style(f"Bootstrap error: {exc}", fg="red"), err=True)
         sys.exit(1)
 
+    _render_expert_summary(app.config.apmoe, err=True)
+
     try:
         result = app.predict(inputs)
     except APMoEError as exc:
@@ -911,6 +1160,8 @@ def validate(config: str) -> None:
         sys.exit(1)
 
     click.echo(click.style("Configuration is valid.", fg="green"))
+    click.echo()
+    _render_expert_summary(app.config.apmoe, health=report["expert_health"])
     click.echo()
 
     # --- Expert health ---

@@ -3,8 +3,10 @@
 APMoE is licensed under the MIT License.
 
 This repository contains framework source code, documentation, configuration
-examples, tests, scripts, and bundled example model artifacts. Unless a file
-states otherwise, those project-authored materials may be used, copied,
+examples, tests, scripts, and demo model artifacts used for local development.
+PyPI wheels intentionally do not include the demo model artifacts; users must
+download them explicitly or provide their own weights. Unless a file states
+otherwise, project-authored materials may be used, copied,
 modified, merged, published, distributed, sublicensed, and sold under the MIT
 License terms.
 
@@ -42,15 +44,17 @@ Project dataset references from the README:
 | TUH EEG Corpus | possible EEG modality | Not included | Confirm clinical data access, citation, and redistribution limits. |
 | MIMIC | possible EHR modality | Not included | Confirm PhysioNet credentialing, DUA restrictions, and whether derived artifacts may be shared. |
 
-Only the framework, tests, docs, configs, scripts, and bundled demo artifacts
-are in this repository. Raw dataset records should not be committed to the repo
-or packaged into distributions.
+Only the framework, tests, docs, configs, scripts, and local demo artifacts are
+in this repository. Raw dataset records should not be committed to the repo or
+packaged into distributions.
 
 ## Model Artifacts
 
-Bundled example model artifacts are included to make local scaffolding and demo
-flows runnable. Before distributing a product or hosted service that uses any
-model artifact, confirm:
+Demo model artifacts are available in source checkouts to make local scaffolding
+and demo flows runnable. They are excluded from PyPI wheels and must be acquired
+with `apmoe download-models`, copied from a configured `APMOE_MODEL_SOURCE_DIR`,
+or replaced with operator-owned weights. Before distributing a product or hosted
+service that uses any model artifact, confirm:
 
 - the source training data allows the intended use;
 - the trained artifact may be redistributed or hosted;
@@ -61,13 +65,13 @@ If a downstream deployment replaces the bundled experts with vendor-hosted or
 customer-owned models, those models remain governed by their own license and
 service terms.
 
-Current bundled artifact inventory:
+Current demo artifact inventory:
 
 | Artifact | Location | Used by | Notes |
 |---|---|---|---|
-| Keystroke ONNX model | `weights/keystroke_age_expert.onnx`, `src/apmoe/weights/keystroke_age_expert.onnx` | `KeystrokeAgeExpert` in `configs/keystroke.json` and `configs/multimodal.json` | Derived from keystroke training data. Confirm the training-data license before external redistribution. |
-| Keystroke constants | `weights/keystroke_constants.json`, `src/apmoe/weights/keystroke_constants.json` | `KeystrokeAgeExpert` feature ordering, medians, labels | Operationally part of the keystroke model package. Treat with the same license/provenance as the ONNX model. |
-| Face Keras model | `weights/face_age_expert.keras`, `src/apmoe/weights/face_age_expert.keras` | `FaceAgeExpert` in `configs/multimodal.json` | Derived from face age training data. Confirm rights for commercial deployment and redistribution. |
+| Keystroke ONNX model | `weights/keystroke_age_expert.onnx`, source checkout `src/apmoe/weights/keystroke_age_expert.onnx` | `KeystrokeAgeExpert` in `configs/keystroke.json` and `configs/multimodal.json` | Derived from keystroke training data. Confirm the training-data license before external redistribution. |
+| Keystroke constants | `weights/keystroke_constants.json`, source checkout `src/apmoe/weights/keystroke_constants.json` | `KeystrokeAgeExpert` feature ordering, medians, labels | Operationally part of the keystroke model package. Treat with the same license/provenance as the ONNX model. |
+| Face Keras model | `weights/face_age_expert.keras`, source checkout `src/apmoe/weights/face_age_expert.keras` | `FaceAgeExpert` in `configs/multimodal.json` | Derived from face age training data. Confirm rights for commercial deployment and redistribution. |
 | Legacy/source face or keystroke artifacts | repository root or historical paths | Documentation and migration context | Do not assume these inherit MIT rights unless the project owner confirms provenance. |
 
 Recommended production packaging rule:
@@ -91,7 +95,10 @@ Dependency groups in `pyproject.toml` matter for notices:
 
 | Install path | Extra dependencies likely present | Notice impact |
 |---|---|---|
-| Core install | FastAPI, Uvicorn, Pydantic, NumPy, Torch, ONNX Runtime, Pillow, TensorFlow/Keras, HTTPX | Include notices for the runtime stack shipped in the application image. |
+| Core install | Click, Pydantic, NumPy | Include notices for the framework runtime shipped in the application image. |
+| `apmoe[serve]` | FastAPI, Uvicorn, python-multipart | Include notices for the HTTP serving stack. |
+| `apmoe[models]` | Pillow, ONNX Runtime, TensorFlow/Keras | Include notices for local demo expert runtime dependencies. |
+| `apmoe[remote]` | HTTPX | Include notices for remote expert HTTP client dependencies. |
 | `apmoe[security]` | PyJWT, cryptography | Include crypto-library notices and comply with export/security review policies where applicable. |
 | `apmoe[redis]` | redis client | Include Redis client notices; the Redis server itself is an infrastructure dependency. |
 | `apmoe[dev]` | pytest, ruff, mypy, pre-commit | Usually development-only; not included in production redistribution unless packaged into the image. |

@@ -10,6 +10,7 @@ run local predictions, and start the HTTP service.
 | Command | Purpose |
 |---|---|
 | `apmoe init [PROJECT_NAME]` | Scaffold a new project folder with starter files |
+| `apmoe download-models --dest weights` | Acquire demo model artifacts for built-in experts |
 | `apmoe serve --config <path>` | Bootstrap `APMoEApp` and run the FastAPI/uvicorn server |
 | `apmoe predict --config <path> --input <path>` | Run local inference from files/manifest |
 | `apmoe validate --config <path>` | Validate config + bootstrap + expert health |
@@ -45,6 +46,37 @@ Notes:
 - If the target directory already exists, the command exits non-zero.
 - Project names are normalized to Python-safe package names in templates
   (`my-project` -> `my_project`).
+- Generated projects use local-only experts by default. The init output prints
+  `Expert mode: local-only (default)`.
+- In an interactive terminal, `apmoe init` asks whether to acquire demo model
+  artifacts. Use `--download-models` or `--no-download-models` for
+  non-interactive scripts.
+- `apmoe init --builtin` uses the same acquisition helper as
+  `apmoe download-models`. Source checkouts can copy local demo artifacts;
+  lightweight wheels require `APMOE_MODEL_SOURCE_DIR` or per-artifact model
+  source environment variables.
+
+---
+
+## `apmoe download-models`
+
+Copies or downloads demo model artifacts for the built-in experts.
+
+```bash
+apmoe download-models --dest weights --model all
+```
+
+Options:
+
+- `--model all|face|keystroke` selects the artifact group.
+- `--dest <dir>` chooses the output directory.
+- `--force` overwrites existing files after acquisition.
+- `--skip-existing/--no-skip-existing` controls existing-file behavior.
+
+The command verifies SHA-256 checksums after every copy or download. PyPI
+wheels do not include model binaries; configure `APMOE_MODEL_SOURCE_DIR` to
+point at a directory containing the expected filenames, or use per-artifact
+variables such as `APMOE_MODEL_SOURCE_FACE`.
 
 ---
 
@@ -69,6 +101,10 @@ config:
 - `--port` -> `APMOE_SERVING_PORT`
 - `--workers` -> `APMOE_SERVING_WORKERS`
 - `--log-level` -> `APMOE_SERVING_LOG_LEVEL`
+
+Before starting uvicorn, `serve` prints an expert summary with `[local]`,
+`[remote]`, and `[local fallback]` labels, remote fallback policy, endpoint
+redaction, and fallback warnings.
 
 Endpoints exposed by the server:
 - `POST /predict`
@@ -96,6 +132,8 @@ Supported input modes:
 Output behavior:
 - Without `--output`, prediction JSON is printed to stdout.
 - With `--output`, JSON is written to the provided file.
+- Expert summary and input diagnostics are printed to stderr so stdout remains
+  valid JSON for shell pipelines.
 
 Rules and edge cases:
 - Unknown modalities in a manifest are skipped with a warning.
@@ -118,7 +156,8 @@ Validation stages:
 3. All configured classes are resolvable/importable (`APMoEApp.from_config`).
 4. Expert weight files exist and experts report healthy (`app.validate()`).
 
-The command prints per-expert load status and exits non-zero on failure.
+The command prints expert mode, backend labels, fallback pairings, per-expert
+load status, and exits non-zero on failure.
 
 ---
 

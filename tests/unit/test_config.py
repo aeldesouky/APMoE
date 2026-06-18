@@ -265,6 +265,7 @@ class TestParsedValues:
     def test_resilience_config_parses(self, tmp_path: Path) -> None:
         data = _base_config()
         data["apmoe"]["expert_failure_policy"] = "skip_failed"
+        data["apmoe"]["remote_fallback_policy"] = "any_remote_error"
         data["apmoe"]["remote_retry"] = {
             "max_attempts": 4,
             "initial_delay_s": 0.1,
@@ -279,6 +280,7 @@ class TestParsedValues:
         }
         cfg = load_config(_write_config(tmp_path / "c.json", data))
         assert cfg.apmoe.expert_failure_policy == "skip_failed"
+        assert cfg.apmoe.remote_fallback_policy == "any_remote_error"
         assert cfg.apmoe.remote_retry.max_attempts == 4
         assert cfg.apmoe.remote_retry.jitter is False
         assert cfg.apmoe.remote_circuit_breaker.enabled is False
@@ -288,6 +290,64 @@ class TestParsedValues:
         data = _base_config()
         data["apmoe"]["expert_failure_policy"] = "sometimes"
         with pytest.raises(ConfigurationError, match="expert_failure_policy"):
+            load_config(_write_config(tmp_path / "c.json", data))
+
+    def test_valid_remote_local_fallback_parses(self, tmp_path: Path) -> None:
+        data = _base_config()
+        data["apmoe"]["experts"] = [
+            {
+                "name": "remote_face",
+                "class": "apmoe.experts.remote.RemoteExpert",
+                "endpoint": "https://models.example.com/predict",
+                "modalities": ["visual"],
+                "fallback_expert": "local_face_standby",
+            },
+            {
+                "name": "local_face_standby",
+                "class": "myproject.FaceExpert",
+                "weights": "./weights/face.pt",
+                "modalities": ["visual"],
+                "fallback_only": True,
+            },
+        ]
+        cfg = load_config(_write_config(tmp_path / "c.json", data))
+        assert cfg.apmoe.experts[0].fallback_expert == "local_face_standby"
+        assert cfg.apmoe.experts[1].fallback_only is True
+        assert cfg.apmoe.remote_fallback_policy == "transient_only"
+
+    def test_remote_fallback_requires_existing_local_target(self, tmp_path: Path) -> None:
+        data = _base_config()
+        data["apmoe"]["experts"][0].pop("weights")
+        data["apmoe"]["experts"][0]["class"] = "apmoe.experts.remote.RemoteExpert"
+        data["apmoe"]["experts"][0]["endpoint"] = "https://models.example.com/predict"
+        data["apmoe"]["experts"][0]["fallback_expert"] = "missing"
+        with pytest.raises(ConfigurationError, match="fallback_expert"):
+            load_config(_write_config(tmp_path / "c.json", data))
+
+    def test_remote_fallback_target_must_be_fallback_only(self, tmp_path: Path) -> None:
+        data = _base_config()
+        data["apmoe"]["experts"] = [
+            {
+                "name": "remote_face",
+                "class": "apmoe.experts.remote.RemoteExpert",
+                "endpoint": "https://models.example.com/predict",
+                "modalities": ["visual"],
+                "fallback_expert": "local_face",
+            },
+            {
+                "name": "local_face",
+                "class": "myproject.FaceExpert",
+                "weights": "./weights/face.pt",
+                "modalities": ["visual"],
+            },
+        ]
+        with pytest.raises(ConfigurationError, match="fallback_only=true"):
+            load_config(_write_config(tmp_path / "c.json", data))
+
+    def test_fallback_expert_only_valid_on_remote(self, tmp_path: Path) -> None:
+        data = _base_config()
+        data["apmoe"]["experts"][0]["fallback_expert"] = "other"
+        with pytest.raises(ConfigurationError, match="fallback_expert"):
             load_config(_write_config(tmp_path / "c.json", data))
 
     def test_invalid_remote_retry_values_raise(self, tmp_path: Path) -> None:

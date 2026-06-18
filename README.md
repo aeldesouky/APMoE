@@ -29,13 +29,41 @@ Datasets are **not included** in this repository due to licensing restrictions b
 - IKDD Keystroke Dynamics Dataset: https://github.com/MachineLearningVisionRG/IKDD.git
 - TUH EEG Corpus: https://isip.piconepress.com/projects/nedc/html/tuh_eeg/
 
-## Installation (From Source)
+## Installation
 
-APMoE requires **Python 3.11+**. Complete environment isolation using Docker is currently in progress. In the meantime, you can easily run the system locally from source.
+APMoE requires **Python 3.11+**. The base package is intentionally lightweight:
+it installs the framework core, public types, registries, config loader, and CLI
+without shipping model artifacts or heavyweight ML backends.
+
+```bash
+pip install apmoe
+```
+
+For the built-in serving stack and demo experts, install the relevant extras:
+
+```bash
+pip install "apmoe[serve,models]"
+```
+
+Common extras:
+
+| Extra | Adds |
+|---|---|
+| `serve` | FastAPI, Uvicorn, multipart upload support |
+| `image` | Pillow image decoding |
+| `onnx` | ONNX Runtime for `KeystrokeAgeExpert` |
+| `tensorflow` | TensorFlow / TensorFlow macOS for `FaceAgeExpert` |
+| `remote` | HTTPX for remote experts |
+| `security` | JWT and cryptography support |
+| `redis` | Redis-backed auth invalidation and rate limiting |
+| `models` | Runtime dependencies for the bundled/demo experts |
+| `dev` | Test, lint, type-check, build, and publishing tools |
+
+### From Source
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/your-org/APMoE.git
+   git clone https://github.com/aeldesouky/APMoE.git
    cd APMoE
    ```
 
@@ -47,9 +75,8 @@ APMoE requires **Python 3.11+**. Complete environment isolation using Docker is 
 
 3. **Install the package in editable mode**:
    ```bash
-   pip install -e .
+   pip install -e ".[dev]"
    ```
-   *This automatically installs all required dependencies (FastAPI, ONNX Runtime, Keras, etc.) specified in `pyproject.toml`.*
 
 4. **Verify the installation**:
    ```bash
@@ -58,15 +85,34 @@ APMoE requires **Python 3.11+**. Complete environment isolation using Docker is 
 
 ## Usage
 
-APMoE is designed to be frictionless out-of-the-box. You do not need to manually configure models to run a smoke test.
+APMoE is designed as a framework package: install the runtime you need, create a
+project scaffold, then provide or download model artifacts explicitly.
 
 ### 1. Scaffolding a Local Project
-Create a runnable configuration by initializing a project with bundled weights:
+Create a runnable configuration:
 ```bash
-apmoe init my_app --builtin
+apmoe init my_app
 cd my_app
 ```
-*(This generates a `config.json` and copies working ONNX/Keras models into a `weights/` directory).*
+
+In an interactive terminal, `apmoe init` asks whether you want to acquire demo
+model artifacts immediately. For scripts, use `--download-models` or
+`--no-download-models` explicitly.
+
+To populate demo model artifacts for the built-in experts:
+
+```bash
+apmoe download-models --dest weights
+```
+
+When running from a source checkout, `apmoe init my_app --builtin` uses the same
+model acquisition path and can copy local demo artifacts into the scaffold. PyPI
+wheels do not bundle model files; set `APMOE_MODEL_SOURCE_DIR` or provide your
+own weights when using a lightweight wheel.
+
+The scaffold is local-only by default. When you run `apmoe validate`,
+`apmoe serve`, or `apmoe predict`, the CLI prints an expert summary showing
+whether each expert is `[local]`, `[remote]`, or `[local fallback]`.
 
 ### 2. Validating the Configuration
 Before starting the server, ensure your configuration and weights are valid:
@@ -84,8 +130,33 @@ The server will bind to `127.0.0.1:8000`. You can interact with the live Swagger
 ### 4. Running the Test Suite (Development)
 If you are developing or contributing to APMoE, ensure you run the comprehensive test suite:
 ```bash
-pip install -e ".[test]"
+pip install -e ".[dev]"
 pytest tests/ -v
+```
+
+## Extending APMoE
+
+Local projects can keep using dotted import paths in `config.json`:
+
+```json
+{ "class": "myproject.experts.MyExpert" }
+```
+
+Installed extension packages can also expose components through Python entry
+points:
+
+```toml
+[project.entry-points."apmoe.experts"]
+my_expert = "my_package.experts:MyExpert"
+
+[project.entry-points."apmoe.aggregators"]
+my_aggregator = "my_package.aggregation:MyAggregator"
+```
+
+After installation, configs may use those short names:
+
+```json
+{ "class": "my_expert" }
 ```
 
 ### API versioning
@@ -101,7 +172,7 @@ APMoE includes framework-level security controls for stateless JWT
 authentication, scope authorization, shared Redis-backed token invalidation and
 rate limiting with process-local fallback on Redis outages, remote expert
 endpoint allowlists, remote retries and circuit breakers, configurable
-prediction fallback, remote response limits, local SHA-256 model checks,
+prediction fallback, paired remote-to-local expert fallback, remote response limits, local SHA-256 model checks,
 RSA-signed remote model manifests, correlation IDs, auditable security logs,
 and secret redaction. See
 [`docs/dev/security.md`](docs/dev/security.md) for the full reference and

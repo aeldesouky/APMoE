@@ -175,6 +175,64 @@ class _ExplodingExpert(ExpertPlugin):
         raise RuntimeError("expert exploded")
 
 
+class _RemotePrimaryExpert(ExpertPlugin):
+    """Remote-like test double that can succeed or raise a configured error."""
+
+    def __init__(
+        self,
+        *,
+        age: float = 55.0,
+        error: Exception | None = None,
+    ) -> None:
+        self.calls = 0
+        self._age = age
+        self._error = error
+
+    @property
+    def name(self) -> str:
+        return "remote_expert"
+
+    def declared_modalities(self) -> list[str]:
+        return ["visual"]
+
+    def load_weights(self, path: str) -> None:
+        pass
+
+    def predict(self, inputs: dict[str, ProcessedInput]) -> ExpertOutput:
+        self.calls += 1
+        if self._error is not None:
+            raise self._error
+        return ExpertOutput(
+            expert_name=self.name,
+            consumed_modalities=list(inputs.keys()),
+            predicted_age=self._age,
+            confidence=0.7,
+            metadata={"backend": "remote"},
+        )
+
+
+class _FallbackExpert(_ConstantExpert):
+    """Local fallback test double that records whether it was invoked."""
+
+    def __init__(
+        self,
+        age: float = 42.0,
+        *,
+        error: Exception | None = None,
+    ) -> None:
+        super().__init__("local_fallback", ["visual"], age=age)
+        self.calls = 0
+        self._error = error
+
+    def predict(self, inputs: dict[str, ProcessedInput]) -> ExpertOutput:
+        self.calls += 1
+        if self._error is not None:
+            raise self._error
+        output = super().predict(inputs)
+        output.metadata["backend"] = "local"
+        return output
+
+
 class _SumAggregator(AggregatorStrategy):
     """Aggregates by averaging age and confidence."""
 
@@ -216,6 +274,7 @@ def _make_pipeline(
     experts: list[ExpertPlugin],
     aggregator: AggregatorStrategy | None = None,
     expert_failure_policy: str = "fail_fast",
+    remote_fallback_policy: str = "transient_only",
 ) -> InferencePipeline:
     """Wire an :class:`InferencePipeline` from simple components."""
     registry = ExpertRegistry()
@@ -226,6 +285,7 @@ def _make_pipeline(
         expert_registry=registry,
         aggregator=aggregator or _SumAggregator(),
         expert_failure_policy=expert_failure_policy,
+        remote_fallback_policy=remote_fallback_policy,
     )
 
 
@@ -513,6 +573,95 @@ class TestRunExpertFailure:
 
         assert prediction.predicted_age == pytest.approx(37.0)
         assert "exploding_expert" in prediction.metadata["failed_experts"]
+
+
+class TestRemoteFallback:
+    def _pipeline_with_remote_and_fallback(
+        self,
+        remote: _RemotePrimaryExpert,
+        fallback: _FallbackExpert,
+        *,
+        expert_failure_policy: str = "fail_fast",
+        remote_fallback_policy: str = "transient_only",
+    ) -> InferencePipeline:
+        pipeline = _make_pipeline(
+            chains={"visual": _make_chain("visual")},
+            experts=[remote, fallback],
+            expert_failure_policy=expert_failure_policy,
+            remote_fallback_policy=remote_fallback_policy,
+        )
+        pipeline.expert_registry.set_expert_metadata(
+            "remote_expert",
+            backend="remote",
+            fallback_expert="local_fallback",
+        )
+        pipeline.expert_registry.set_expert_metadata(
+            "local_fallback",
+            backend="local",
+            fallback_only=True,
+        )
+        return pipeline
+
+    def test_remote_success_does_not_call_fallback(self) -> None:
+        remote = _RemotePrimaryExpert(age=50.0)
+        fallback = _FallbackExpert(age=42.0)
+        pipeline = self._pipeline_with_remote_and_fallback(remote, fallback)
+
+        prediction = pipeline.run({"visual": b"img"})
+
+        assert prediction.predicted_age == pytest.approx(50.0)
+        assert remote.calls == 1
+        assert fallback.calls == 0
+        assert prediction.metadata["fallback_experts"] == []
+
+    def test_transient_remote_failure_uses_local_fallback(self) -> None:
+        remote = _RemotePrimaryExpert(
+            error=ExpertError("RemoteExpert timed out", context={"status_code": 503})
+        )
+        fallback = _FallbackExpert(age=42.0)
+        pipeline = self._pipeline_with_remote_and_fallback(remote, fallback)
+
+        prediction = pipeline.run({"visual": b"img"})
+
+        assert prediction.predicted_age == pytest.approx(42.0)
+        output = prediction.per_expert_outputs[0]
+        assert output.expert_name == "remote_expert"
+        assert output.metadata["fallback_expert"] == "local_fallback"
+        assert output.metadata["actual_expert_name"] == "local_fallback"
+        assert prediction.metadata["fallback_experts"][0]["remote_expert"] == "remote_expert"
+        assert "remote_expert" in prediction.metadata["failed_experts"]
+
+    def test_disabled_fallback_preserves_fail_fast(self) -> None:
+        remote = _RemotePrimaryExpert(
+            error=ExpertError("RemoteExpert timed out", context={"status_code": 503})
+        )
+        fallback = _FallbackExpert(age=42.0)
+        pipeline = self._pipeline_with_remote_and_fallback(
+            remote,
+            fallback,
+            remote_fallback_policy="disabled",
+        )
+
+        with pytest.raises(ExpertError, match="timed out"):
+            pipeline.run({"visual": b"img"})
+
+        assert fallback.calls == 0
+
+    def test_fallback_failure_obeys_skip_failed_policy(self) -> None:
+        remote = _RemotePrimaryExpert(
+            error=ExpertError("RemoteExpert timed out", context={"status_code": 503})
+        )
+        fallback = _FallbackExpert(error=ExpertError("fallback failed"))
+        pipeline = self._pipeline_with_remote_and_fallback(
+            remote,
+            fallback,
+            expert_failure_policy="skip_failed",
+        )
+
+        with pytest.raises(PipelineError, match="No experts produced output") as exc_info:
+            pipeline.run({"visual": b"img"})
+
+        assert "remote_expert" in exc_info.value.context["failed_experts"]
 
 
 # ---------------------------------------------------------------------------

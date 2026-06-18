@@ -154,6 +154,12 @@ class ExpertConfig(BaseModel):
             When ``None`` (default), the framework expects the response to
             contain top-level ``predicted_age``, ``confidence``, and
             ``metadata`` keys directly.
+        fallback_expert: Optional local fallback expert name. Only valid for
+            remote experts. The named expert must be a local expert marked
+            ``fallback_only=true``.
+        fallback_only: Whether this local expert is loaded only as a standby
+            fallback for a remote expert. Fallback-only experts do not run
+            during normal inference.
         extra: Any additional expert-specific config keys that the concrete
             class may consume (e.g. ``temperature``, ``threshold``).
     """
@@ -170,6 +176,8 @@ class ExpertConfig(BaseModel):
     response_mapping: dict[str, str] | None = None
     endpoint_response_max_bytes: int | None = None
     integrity: "ExpertIntegrityConfig | None" = None
+    fallback_expert: str | None = None
+    fallback_only: bool = False
     extra: dict[str, Any] = Field(default_factory=dict)
 
     model_config = {"populate_by_name": True}
@@ -204,6 +212,14 @@ class ExpertConfig(BaseModel):
             raise ValueError(
                 f"Expert '{self.name}': one of 'weights' (local file path) or "
                 f"'endpoint' (remote HTTP URL) is required."
+            )
+        if self.fallback_expert is not None and not has_endpoint:
+            raise ValueError(
+                f"Expert '{self.name}': fallback_expert is only valid for remote experts."
+            )
+        if self.fallback_only and has_endpoint:
+            raise ValueError(
+                f"Expert '{self.name}': fallback_only=true is only valid for local experts."
             )
         return self
 
@@ -432,6 +448,11 @@ class APMoEConfig(BaseModel):
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     confidence_threshold: float | None = None
     expert_failure_policy: Literal["fail_fast", "skip_failed"] = "fail_fast"
+    remote_fallback_policy: Literal[
+        "transient_only",
+        "any_remote_error",
+        "disabled",
+    ] = "transient_only"
     remote_retry: RemoteRetryConfig = Field(default_factory=RemoteRetryConfig)
     remote_circuit_breaker: RemoteCircuitBreakerConfig = Field(
         default_factory=RemoteCircuitBreakerConfig
@@ -493,6 +514,47 @@ class APMoEConfig(BaseModel):
                     f"Duplicate expert name '{e.name}'. Each expert must have a unique name."
                 )
             seen.add(e.name)
+        return self
+
+    @model_validator(mode="after")
+    def validate_remote_fallbacks(self) -> "APMoEConfig":
+        """Validate paired remote-to-local fallback references."""
+        by_name = {expert.name: expert for expert in self.experts}
+        fallback_targets = {
+            expert.fallback_expert
+            for expert in self.experts
+            if expert.fallback_expert is not None
+        }
+        for expert in self.experts:
+            if expert.fallback_expert is None:
+                continue
+            target = by_name.get(expert.fallback_expert)
+            if target is None:
+                raise ValueError(
+                    f"Expert '{expert.name}' references unknown fallback_expert "
+                    f"'{expert.fallback_expert}'."
+                )
+            if target.endpoint is not None:
+                raise ValueError(
+                    f"Expert '{expert.name}' fallback_expert '{target.name}' must be local."
+                )
+            if not target.fallback_only:
+                raise ValueError(
+                    f"Expert '{expert.name}' fallback_expert '{target.name}' must set "
+                    "fallback_only=true."
+                )
+            missing = set(target.modalities) - set(expert.modalities)
+            if missing:
+                raise ValueError(
+                    f"Expert '{expert.name}' fallback_expert '{target.name}' requires "
+                    f"modalities not provided to the remote primary: {sorted(missing)}."
+                )
+        for expert in self.experts:
+            if expert.fallback_only and expert.name not in fallback_targets:
+                raise ValueError(
+                    f"Expert '{expert.name}' has fallback_only=true but no remote expert "
+                    "references it as fallback_expert."
+                )
         return self
 
     @model_validator(mode="after")

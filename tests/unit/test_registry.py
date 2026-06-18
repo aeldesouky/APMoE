@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import pytest
 
+import apmoe.core.plugins as plugins
+from apmoe.aggregation.base import AggregatorStrategy, aggregator_registry
 from apmoe.core.exceptions import RegistryError
 from apmoe.core.registry import Registry
+from apmoe.core.types import ExpertOutput, Prediction
 
 
 # ---------------------------------------------------------------------------
@@ -23,6 +26,40 @@ class _ImplA(_Base):
 
 class _ImplB(_Base):
     """Second concrete implementation."""
+
+
+class _EntryPoint:
+    """Small importlib.metadata.EntryPoint test double."""
+
+    def __init__(self, name: str, group: str, loaded: object) -> None:
+        self.name = name
+        self.group = group
+        self._loaded = loaded
+
+    def load(self) -> object:
+        return self._loaded
+
+
+class _EntryPoints:
+    """Entry-points collection with the modern ``select`` API."""
+
+    def __init__(self, values: list[_EntryPoint]) -> None:
+        self._values = values
+
+    def select(self, *, group: str) -> list[_EntryPoint]:
+        return [entry_point for entry_point in self._values if entry_point.group == group]
+
+
+class _PluginAggregator(AggregatorStrategy):
+    """Aggregator exposed through a fake package entry point."""
+
+    def aggregate(self, outputs: list[ExpertOutput]) -> Prediction:
+        output = outputs[0]
+        return Prediction(
+            predicted_age=output.predicted_age,
+            confidence=output.confidence,
+            per_expert_outputs=list(outputs),
+        )
 
 
 @pytest.fixture()
@@ -159,6 +196,45 @@ class TestResolve:
             "apmoe.processing.builtin.keystroke_anonymizers.KeystrokeAnonymizer",
         )
         assert cls is KeystrokeAnonymizer
+
+
+class TestEntryPointDiscovery:
+    def test_discovers_aggregator_entry_point(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        entry_points = _EntryPoints(
+            [
+                _EntryPoint(
+                    "unit_test_plugin_aggregator",
+                    "apmoe.aggregators",
+                    _PluginAggregator,
+                )
+            ]
+        )
+        monkeypatch.setattr(plugins.metadata, "entry_points", lambda: entry_points)
+
+        plugins.discover_plugin_entry_points(force=True)
+
+        assert aggregator_registry.resolve("unit_test_plugin_aggregator") is _PluginAggregator
+
+    def test_rejects_entry_point_with_wrong_type(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        entry_points = _EntryPoints(
+            [
+                _EntryPoint(
+                    "unit_test_bad_aggregator",
+                    "apmoe.aggregators",
+                    _ImplA,
+                )
+            ]
+        )
+        monkeypatch.setattr(plugins.metadata, "entry_points", lambda: entry_points)
+
+        with pytest.raises(RegistryError, match="must load a subclass"):
+            plugins.discover_plugin_entry_points(force=True)
 
 
 # ---------------------------------------------------------------------------

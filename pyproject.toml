@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "apmoe"
 version = "0.1.0"
-description = "APMoE: Age Prediction using Mixture of Experts — an inference-only, IoC-based Python framework"
+description = "APMoE: Age Prediction using Mixture of Experts - an inference-only, IoC-based Python framework"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11, <3.13"
@@ -15,54 +15,118 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
 ]
 dependencies = [
-    "pydantic>=2.5",
-    "fastapi>=0.110",
-    "uvicorn[standard]>=0.29",
     "click>=8.1",
     "numpy>=1.26",
-    "torch>=2.2",
-    "onnxruntime>=1.17",
+    "pydantic>=2.5",
+]
+
+[project.urls]
+Homepage = "https://github.com/aeldesouky/APMoE"
+Documentation = "https://github.com/aeldesouky/APMoE/tree/main/docs"
+Repository = "https://github.com/aeldesouky/APMoE"
+Issues = "https://github.com/aeldesouky/APMoE/issues"
+
+[project.optional-dependencies]
+serve = [
+    "fastapi>=0.110",
     "python-multipart>=0.0.22",
+    "uvicorn[standard]>=0.29",
+]
+image = [
+    "pillow>=10.0",
+]
+onnx = [
+    "onnxruntime>=1.17",
+]
+tensorflow = [
+    "tensorflow>=2.15; sys_platform != 'darwin' or platform_machine != 'arm64'",
+    "tensorflow-macos>=2.15; sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
+torch = [
+    "torch>=2.2",
+]
+remote = [
+    "httpx>=0.27",
+]
+security = [
+    "PyJWT[crypto]>=2.8",
+    "cryptography>=42.0",
+]
+redis = [
+    "redis>=5.0",
+]
+models = [
+    "onnxruntime>=1.17",
     "pillow>=10.0",
     "tensorflow>=2.15; sys_platform != 'darwin' or platform_machine != 'arm64'",
     "tensorflow-macos>=2.15; sys_platform == 'darwin' and platform_machine == 'arm64'",
-    "httpx>=0.27",           # Required by RemoteExpert for remote model endpoints
-]
-
-[project.optional-dependencies]
-remote = [
-    "httpx>=0.27",           # Alias for pip install apmoe[remote]
-]
-security = [
-    "PyJWT[crypto]>=2.8",    # Required by JWTBearerAuthProvider
-    "cryptography>=42.0",    # Required by RSA-signed remote model manifests
-]
-redis = [
-    "redis>=5.0",            # Required by Redis-backed invalidation/rate-limit stores
 ]
 dev = [
+    "build>=1.2",
+    "cryptography>=42.0",
+    "fastapi>=0.110",
+    "httpx>=0.27",
+    "mypy>=1.9",
+    "onnxruntime>=1.17",
+    "pillow>=10.0",
+    "pre-commit>=3.7",
+    "PyJWT[crypto]>=2.8",
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-cov>=5.0",
+    "python-multipart>=0.0.22",
+    "redis>=5.0",
     "ruff>=0.4",
-    "mypy>=1.9",
-    "pre-commit>=3.7",
-    "httpx>=0.27",           # FastAPI TestClient dependency
+    "tensorflow>=2.15; sys_platform != 'darwin' or platform_machine != 'arm64'",
+    "tensorflow-macos>=2.15; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "torch>=2.2",
+    "twine>=5.0",
+    "uvicorn[standard]>=0.29",
 ]
 
 [project.scripts]
 apmoe = "apmoe.cli.main:cli"
 
+[project.entry-points."apmoe.modality_processors"]
+image = "apmoe.modality.builtin.image:ImageProcessor"
+keystroke = "apmoe.modality.builtin.keystroke:KeystrokeProcessor"
+
+[project.entry-points."apmoe.cleaners"]
+image_cleaner = "apmoe.processing.builtin.image_cleaners:ImageCleaner"
+keystroke_cleaner = "apmoe.processing.builtin.cleaners:KeystrokeCleaner"
+base64_image_cleaner = "apmoe.processing.llm:Base64ImageCleaner"
+
+[project.entry-points."apmoe.anonymizers"]
+image_anonymizer = "apmoe.processing.builtin.image_anonymizers:ImageAnonymizer"
+keystroke_anonymizer = "apmoe.processing.builtin.anonymizers:KeystrokeAnonymizer"
+passthrough_image_anonymizer = "apmoe.processing.llm:PassthroughImageAnonymizer"
+
+[project.entry-points."apmoe.experts"]
+face_age_expert = "apmoe.experts.builtin:FaceAgeExpert"
+keystroke_age_expert = "apmoe.experts.builtin:KeystrokeAgeExpert"
+remote = "apmoe.experts.remote:RemoteExpert"
+lmstudio = "apmoe.experts.providers.lmstudio:LMStudioExpert"
+
+[project.entry-points."apmoe.aggregators"]
+weighted_average = "apmoe.aggregation.builtin:WeightedAverageAggregator"
+confidence_weighted = "apmoe.aggregation.builtin:ConfidenceWeightedAggregator"
+median = "apmoe.aggregation.builtin:MedianAggregator"
+
+[tool.hatch.build]
+exclude = [
+    "/src/apmoe/weights/**",
+    "/weights/**",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/apmoe"]
-# Ship the default pretrained models as package data so ``apmoe init`` can
-# seed new project weights/ directories without any extra download step.
-artifacts = ["src/apmoe/weights/**"]
 
 # ---------------------------------------------------------------------------
 # Ruff (linter + formatter)
@@ -75,7 +139,7 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "ANN", "D", "N", "SIM", "RUF"]
 ignore = [
-    "D100",  # Missing docstring in public module — handled per-file
+    "D100",  # Missing docstring in public module - handled per-file
     "D104",  # Missing docstring in public package
     "ANN101", # Missing type annotation for self
     "ANN102", # Missing type annotation for cls

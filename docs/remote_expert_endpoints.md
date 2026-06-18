@@ -586,6 +586,48 @@ treats `ExpertOutput` objects identically regardless of their origin.
 
 ---
 
+## Paired local fallback for a remote expert
+
+A remote expert can name a local standby expert with `fallback_expert`. The
+standby expert must set `fallback_only=true`; it is loaded and health-checked
+but does not run unless the remote primary fails under
+`apmoe.remote_fallback_policy`.
+
+```json
+{
+  "apmoe": {
+    "remote_fallback_policy": "transient_only",
+    "experts": [
+      {
+        "name": "remote_face_expert",
+        "class": "apmoe.experts.remote.RemoteExpert",
+        "modalities": ["image"],
+        "endpoint": "$REMOTE_FACE_ENDPOINT",
+        "fallback_expert": "local_face_standby"
+      },
+      {
+        "name": "local_face_standby",
+        "class": "apmoe.experts.builtin.FaceAgeExpert",
+        "weights": "./weights/face_age_expert.keras",
+        "modalities": ["image"],
+        "fallback_only": true
+      }
+    ]
+  }
+}
+```
+
+Fallback outputs are attributed to the remote expert name for aggregation
+weights, while `Prediction.metadata["fallback_experts"]` and the per-expert
+output metadata record the actual local fallback. The CLI shows this as
+`[remote] remote_face_expert ... fallback=local_face_standby` and
+`[local fallback] local_face_standby ... standby`.
+
+Both experts receive the same processed modality inputs, so configure the
+modality pipeline to be compatible with the remote primary and local fallback.
+
+---
+
 ## Provider-specific examples
 
 ### HuggingFace Inference API
