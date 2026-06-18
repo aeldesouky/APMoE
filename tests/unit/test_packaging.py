@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import tomllib
 from pathlib import Path
 
@@ -67,6 +68,16 @@ def test_project_urls_are_publish_ready() -> None:
     assert "your-org" not in Path("src/apmoe/cli/main.py").read_text(encoding="utf-8")
 
 
+def test_package_versions_are_in_sync() -> None:
+    """Release automation expects package metadata and public version to match."""
+    project = _pyproject()["project"]  # type: ignore[index]
+    init_text = Path("src/apmoe/__init__.py").read_text(encoding="utf-8")
+    match = re.search(r'^__version__ = "([^"]+)"$', init_text, re.MULTILINE)
+
+    assert match is not None
+    assert project["version"] == match.group(1)  # type: ignore[index]
+
+
 def test_pypi_trusted_publishing_workflow_exists() -> None:
     """PyPI Trusted Publishing references this workflow filename."""
     workflow = Path(".github/workflows/publish.yml")
@@ -75,3 +86,6 @@ def test_pypi_trusted_publishing_workflow_exists() -> None:
     text = workflow.read_text(encoding="utf-8")
     assert "id-token: write" in text
     assert "pypa/gh-action-pypi-publish" in text
+    assert "group: pypi-publish" in text
+    assert "github.event.release.tag_name" in text
+    assert "Version mismatch:" in text
