@@ -79,6 +79,7 @@ Raw input (bytes / file)
 | [core/app.md](core/app.md) | `APMoEApp` — IoC container, bootstrap lifecycle, inference API *(Phase 3)* |
 | [serving.md](serving.md) | FastAPI serving layer — routes, middleware order, auth and rate-limit behavior *(Phase 4)* |
 | [security.md](security.md) | Security controls — authn/authz, Redis stores, remote allowlists, model integrity, audit logs |
+| [security-summary.md](security-summary.md) | Audit-friendly summary of implemented security measures with code links |
 | [cli.md](cli.md) | CLI reference — `init`, `serve`, `predict`, `validate`, exit/error behavior *(Phase 5)* |
 | [extension-points/index.md](extension-points/index.md) | Overview of every extension point and the IoC contract |
 | [extension-points/modality-processor.md](extension-points/modality-processor.md) | How to implement `ModalityProcessor` |
