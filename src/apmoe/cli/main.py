@@ -49,7 +49,8 @@ _CONFIG_TEMPLATE: str = """\
         "processor": "apmoe.modality.builtin.image.ImageProcessor",
         "pipeline": {
           "cleaner": "apmoe.processing.builtin.image_cleaners.ImageCleaner",
-          "anonymizer": "apmoe.processing.builtin.image_anonymizers.ImageAnonymizer"
+          "anonymizer": "apmoe.processing.builtin.image_anonymizers.ImageAnonymizer",
+          "embedder": null
         }
       },
       {
@@ -57,7 +58,8 @@ _CONFIG_TEMPLATE: str = """\
         "processor": "apmoe.modality.builtin.keystroke.KeystrokeProcessor",
         "pipeline": {
           "cleaner": "apmoe.processing.builtin.cleaners.KeystrokeCleaner",
-          "anonymizer": "apmoe.processing.builtin.anonymizers.KeystrokeAnonymizer"
+          "anonymizer": "apmoe.processing.builtin.anonymizers.KeystrokeAnonymizer",
+          "embedder": null
         }
       }
     ],
@@ -82,7 +84,38 @@ _CONFIG_TEMPLATE: str = """\
       "host": "0.0.0.0",
       "port": 8000,
       "workers": 1,
-      "log_level": "info"
+      "log_level": "info",
+      "cors_origins": ["*"],
+      "rate_limit": null,
+      "authentication_enabled": false,
+      "authorization_enabled": false,
+      "token_invalidation_store": "memory",
+      "token_invalidation_redis_url": null,
+      "rate_limit_store": "memory",
+      "rate_limit_redis_url": null
+    },
+    "environment": "development",
+    "security": {
+      "remote_endpoint_allowlist": null,
+      "remote_enforce_https": true,
+      "remote_allow_private_networks": false,
+      "remote_response_max_bytes": 1048576,
+      "audit_enabled": true,
+      "audit_success_events": true
+    },
+    "confidence_threshold": null,
+    "expert_failure_policy": "fail_fast",
+    "remote_retry": {
+      "max_attempts": 3,
+      "initial_delay_s": 0.25,
+      "max_delay_s": 2.0,
+      "backoff_multiplier": 2.0,
+      "jitter": true
+    },
+    "remote_circuit_breaker": {
+      "enabled": true,
+      "failure_threshold": 5,
+      "recovery_timeout_s": 30.0
     }
   }
 }
@@ -235,6 +268,59 @@ from __future__ import annotations
 #         )
 '''
 
+_SECURITY_TEMPLATE: str = '''\
+"""Optional custom authentication and authorization for {project_name}.
+
+APMoE provides two security models — choose one:
+
+1. **Stateless JWT/Bearer** (recommended for production):
+   Implement :class:`~apmoe.serving.middleware.StatelessAuthProvider` and pass
+   it to :func:`~apmoe.serving.app_factory.create_api` via ``security_provider``.
+   Enable in ``config.json``:
+       "serving": {{ "authentication_enabled": true, "authorization_enabled": true }}
+
+2. **Legacy AuthPlugin** (simple binary allow/deny):
+   Subclass :class:`~apmoe.serving.middleware.AuthPlugin` and pass it via
+   ``auth_plugin`` in :func:`~apmoe.serving.app_factory.create_api`.
+   (Mutually exclusive with the stateless provider.)
+
+3. **Custom AuthorizationPolicy**:
+   Subclass :class:`~apmoe.serving.middleware.AuthorizationPolicy` to define
+   which JWT scopes are required for each route, then pass via
+   ``authorization_policy`` in :func:`~apmoe.serving.app_factory.create_api`.
+"""
+
+from __future__ import annotations
+
+# --- Example 1: JWT Bearer provider (stateless) ---
+# from apmoe.serving.middleware import AuthContext, StatelessAuthProvider
+# from starlette.requests import Request
+#
+# class MyJWTProvider(StatelessAuthProvider):
+#     def authenticate(self, request: Request) -> AuthContext | None:
+#         token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+#         # validate token, return None to reject
+#         return None  # replace with real validation
+
+# --- Example 2: Legacy AuthPlugin ---
+# from apmoe.serving.middleware import AuthPlugin
+# from starlette.requests import Request
+#
+# class MyAuthPlugin(AuthPlugin):
+#     def authenticate(self, request: Request) -> bool:
+#         return request.headers.get("X-API-Key") == "my-secret-key"
+
+# --- Example 3: Custom scope-based AuthorizationPolicy ---
+# from apmoe.serving.middleware import AuthContext, AuthorizationPolicy
+# from starlette.requests import Request
+#
+# class MyAuthorizationPolicy(AuthorizationPolicy):
+#     def authorize(self, context: AuthContext, request: Request) -> bool:
+#         if request.url.path.startswith("/v1/predict"):
+#             return "predict" in context.scopes
+#         return True
+'''
+
 _README_TEMPLATE: str = """\
 # {project_name}
 
@@ -263,19 +349,79 @@ An APMoE project for age prediction using Mixture of Experts.
    apmoe predict --config config.json --input data/
    ```
 
+## API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/v1/predict` | Multimodal age prediction (versioned) |
+| `GET`  | `/v1/health`  | Readiness/liveness probe (versioned) |
+| `GET`  | `/v1/info`    | Framework metadata snapshot (versioned) |
+| `POST` | `/predict`    | Legacy (deprecated, use `/v1/predict`) |
+| `GET`  | `/health`     | Legacy health check |
+| `GET`  | `/info`       | Legacy info |
+| `GET`  | `/docs`       | Swagger UI (OpenAPI) |
+| `GET`  | `/redoc`      | ReDoc (OpenAPI) |
+
+## Security
+
+By default (`authentication_enabled: false`) the server accepts all requests.
+For production, enable JWT Bearer authentication:
+
+```json
+"serving": {{
+  "authentication_enabled": true,
+  "authorization_enabled": true,
+  "token_invalidation_store": "redis",
+  "token_invalidation_redis_url": "redis://localhost:6379/0"
+}}
+```
+
+Then pass a `StatelessAuthProvider` (e.g. `JWTBearerAuthProvider`) to
+`create_api()`. See `custom_security.py` for stubs.
+
+Rate limiting:
+```json
+"serving": {{ "rate_limit": 60, "rate_limit_store": "memory" }}
+```
+
+CORS:
+```json
+"serving": {{ "cors_origins": ["https://myapp.com"] }}
+```
+
+Remote expert security (`apmoe.security`):
+```json
+"security": {{
+  "remote_endpoint_allowlist": ["api.example.com"],
+  "remote_enforce_https": true,
+  "remote_allow_private_networks": false
+}}
+```
+
+## Key Configuration Options
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `environment` | `"development"` | One of: development, test, staging, production |
+| `confidence_threshold` | `null` | Gate below which recommendations are added |
+| `expert_failure_policy` | `"fail_fast"` | `"fail_fast"` or `"skip_failed"` |
+| `remote_retry.max_attempts` | `3` | Retries for remote expert calls |
+| `remote_circuit_breaker.enabled` | `true` | Circuit breaker for remote experts |
+
 ## Project Structure
 
 ```
 {project_name}/
-  config.json          # Framework configuration (built-in Keras + ONNX experts)
-  custom_processor.py  # Optional: your own ModalityProcessor stubs
-  custom_cleaner.py    # Optional: your own CleanerStrategy stubs
-  custom_anonymizer.py # Optional: your own AnonymizerStrategy stubs
-  custom_embedder.py   # Optional: your own EmbedderStrategy stubs
-  custom_expert.py     # Optional: your own ExpertPlugin (default config uses builtins)
-  custom_aggregator.py # Optional: your own AggregatorStrategy stubs
-  weights/             # face_age_expert.keras, keystroke_*.onnx, keystroke_constants.json
-  README.md            # This file
+  config.json           # Framework configuration (built-in Keras + ONNX experts)
+  custom_processor.py   # Optional: your own ModalityProcessor stubs
+  custom_cleaner.py     # Optional: your own CleanerStrategy stubs
+  custom_anonymizer.py  # Optional: your own AnonymizerStrategy stubs
+  custom_embedder.py    # Optional: your own EmbedderStrategy stubs
+  custom_expert.py      # Optional: your own ExpertPlugin (default config uses builtins)
+  custom_aggregator.py  # Optional: your own AggregatorStrategy stubs
+  custom_security.py    # Optional: your own AuthPlugin / StatelessAuthProvider stubs
+  weights/              # face_age_expert.keras, keystroke_*.onnx, keystroke_constants.json
+  README.md             # This file
 ```
 
 ## Extending the Framework
@@ -286,6 +432,7 @@ An APMoE project for age prediction using Mixture of Experts.
 - Subclass `EmbedderStrategy` in `custom_embedder.py` when you need embeddings.
 - Subclass `ExpertPlugin` in `custom_expert.py`.
 - Subclass `AggregatorStrategy` in `custom_aggregator.py`.
+- Implement `StatelessAuthProvider` or `AuthPlugin` in `custom_security.py`.
 - Reference your custom classes in `config.json` with dotted paths like `"custom_expert.MyCustomExpert"`.
 - See the [APMoE documentation](https://github.com/your-org/apmoe) for details.
 """
@@ -343,9 +490,10 @@ def cli() -> None:
 def init(project_name: str, builtin: bool) -> None:
     """Scaffold a new APMoE project directory.
 
-    Creates PROJECT_NAME/ with a config template wired to the built-in Keras
-    and ONNX experts, bundled default weights, starter stubs for every major
-    extension point, and a README.
+    Creates PROJECT_NAME/ with a config template covering all framework
+    features (serving, security, rate limiting, CORS, remote experts,
+    circuit breaker, retry policy), starter stubs for every extension point,
+    bundled default weights, and a README.
 
     \b
     Files created:
@@ -401,6 +549,7 @@ def init(project_name: str, builtin: bool) -> None:
         "custom_embedder.py": _EMBEDDER_TEMPLATE,
         "custom_expert.py": _EXPERT_TEMPLATE,
         "custom_aggregator.py": _AGGREGATOR_TEMPLATE,
+        "custom_security.py": _SECURITY_TEMPLATE,
     }
     for filename, template in template_files.items():
         content = template.replace("{project_name}", project_name)
@@ -410,34 +559,29 @@ def init(project_name: str, builtin: bool) -> None:
     (project_dir / "README.md").write_text(readme_content, encoding="utf-8")
 
     click.echo(click.style(f"Created project '{project_name}/'", fg="green"))
-    click.echo(
-        f"  {project_name}/custom_processor.py - optional custom ModalityProcessor stubs"
-    )
-    click.echo(
-        f"  {project_name}/custom_cleaner.py   - optional custom CleanerStrategy stubs"
-    )
-    click.echo(
-        f"  {project_name}/custom_anonymizer.py - optional custom AnonymizerStrategy stubs"
-    )
-    click.echo(
-        f"  {project_name}/custom_embedder.py  - optional custom EmbedderStrategy stubs"
-    )
-    click.echo(
-        f"  {project_name}/custom_aggregator.py - optional custom AggregatorStrategy stubs"
-    )
-    click.echo(f"  {project_name}/config.json        — edit to configure your components")
-    click.echo(f"  {project_name}/custom_expert.py   — optional custom ExpertPlugin stubs")
+    click.echo(f"  {project_name}/config.json          — full config (edit to configure)")
+    click.echo(f"  {project_name}/custom_processor.py  — optional ModalityProcessor stubs")
+    click.echo(f"  {project_name}/custom_cleaner.py    — optional CleanerStrategy stubs")
+    click.echo(f"  {project_name}/custom_anonymizer.py — optional AnonymizerStrategy stubs")
+    click.echo(f"  {project_name}/custom_embedder.py   — optional EmbedderStrategy stubs")
+    click.echo(f"  {project_name}/custom_expert.py     — optional ExpertPlugin stubs")
+    click.echo(f"  {project_name}/custom_aggregator.py — optional AggregatorStrategy stubs")
+    click.echo(f"  {project_name}/custom_security.py   — optional AuthPlugin/StatelessAuthProvider stubs")
     if copied:
         for name in copied:
             click.echo(f"  {project_name}/weights/{name}")
     else:
-        click.echo(f"  {project_name}/weights/            — place pretrained model files here")
-    click.echo(f"  {project_name}/README.md           — quick-start instructions")
+        click.echo(f"  {project_name}/weights/             — place pretrained model files here")
+    click.echo(f"  {project_name}/README.md            — quick-start + API endpoint reference")
     click.echo()
     click.echo("Next steps:")
     click.echo(f"  cd {project_name}")
     click.echo("  apmoe validate --config config.json")
     click.echo("  apmoe serve --config config.json")
+    click.echo()
+    click.echo(click.style("Tip:", fg="cyan") + " authentication is disabled by default.")
+    click.echo("  Set \"authentication_enabled\": true in config.json and implement")
+    click.echo("  StatelessAuthProvider in custom_security.py for production use.")
 
 
 # ---------------------------------------------------------------------------
@@ -734,6 +878,11 @@ def validate(config: str) -> None:
       * All component classes can be resolved and imported
       * All expert weight files exist on disk
       * All expert plugins report as loaded
+      * Security config coherence (authentication/authorization settings)
+      * Remote expert endpoint URL format and allowlist policy
+      * Serving config: CORS, rate limiting, token/rate stores
+      * Environment, confidence_threshold, expert_failure_policy
+      * Remote retry and circuit breaker policy
     """
     from apmoe.core.app import APMoEApp
     from apmoe.core.exceptions import APMoEError
@@ -763,6 +912,8 @@ def validate(config: str) -> None:
 
     click.echo(click.style("Configuration is valid.", fg="green"))
     click.echo()
+
+    # --- Expert health ---
     click.echo("Expert health:")
     health: dict[str, bool] = report["expert_health"]
     for name, loaded in health.items():
@@ -774,3 +925,123 @@ def validate(config: str) -> None:
         click.echo(f"  {name}: {status}")
     if not health:
         click.echo("  (no experts registered)")
+
+    # --- Config summary ---
+    apmoe_cfg = app.config.apmoe
+    serving_cfg = apmoe_cfg.serving
+    security_cfg = apmoe_cfg.security
+
+    click.echo()
+    click.echo("Configuration summary:")
+    click.echo(f"  environment          : {apmoe_cfg.environment}")
+    click.echo(f"  expert_failure_policy: {apmoe_cfg.expert_failure_policy}")
+    click.echo(
+        f"  confidence_threshold : "
+        f"{apmoe_cfg.confidence_threshold if apmoe_cfg.confidence_threshold is not None else '(disabled)'}"
+    )
+
+    # --- Serving ---
+    click.echo()
+    click.echo("Serving:")
+    click.echo(f"  host        : {serving_cfg.host}:{serving_cfg.port}")
+    click.echo(f"  workers     : {serving_cfg.workers}")
+    click.echo(f"  log_level   : {serving_cfg.log_level}")
+    click.echo(f"  cors_origins: {serving_cfg.cors_origins}")
+    click.echo(
+        f"  rate_limit  : "
+        f"{serving_cfg.rate_limit} req/min" if serving_cfg.rate_limit else "  rate_limit  : (disabled)"
+    )
+
+    # --- Security / Auth ---
+    click.echo()
+    click.echo("Security / Authentication:")
+    auth_enabled = serving_cfg.authentication_enabled
+    authz_enabled = serving_cfg.authorization_enabled
+    click.echo(
+        f"  authentication : "
+        + (click.style("enabled", fg="green") if auth_enabled else click.style("disabled", fg="yellow"))
+    )
+    click.echo(
+        f"  authorization  : "
+        + (click.style("enabled", fg="green") if authz_enabled else click.style("disabled", fg="yellow"))
+    )
+    click.echo(f"  token_invalidation_store: {serving_cfg.token_invalidation_store}")
+    click.echo(f"  rate_limit_store        : {serving_cfg.rate_limit_store}")
+
+    # Warn about insecure combinations
+    warnings: list[str] = []
+    if apmoe_cfg.environment == "production" and not auth_enabled:
+        warnings.append(
+            "Production environment detected but authentication_enabled=false. "
+            "Enable authentication for production deployments."
+        )
+    if authz_enabled and not auth_enabled:
+        warnings.append(
+            "authorization_enabled=true but authentication_enabled=false — "
+            "authorization has no effect without authentication."
+        )
+    if auth_enabled and serving_cfg.token_invalidation_store == "memory" and serving_cfg.workers > 1:
+        warnings.append(
+            "token_invalidation_store='memory' with multiple workers — "
+            "token invalidation will not be shared across workers. Use 'redis' for production."
+        )
+    if serving_cfg.rate_limit is not None and serving_cfg.rate_limit_store == "memory" and serving_cfg.workers > 1:
+        warnings.append(
+            "rate_limit_store='memory' with multiple workers — "
+            "rate limits will not be coordinated across workers. Use 'redis' for production."
+        )
+    if serving_cfg.cors_origins == ["*"] and apmoe_cfg.environment == "production":
+        warnings.append(
+            "cors_origins=['*'] allows all origins. "
+            "Restrict to specific domains in production."
+        )
+
+    # --- Remote experts ---
+    remote_experts = [e for e in apmoe_cfg.experts if e.endpoint is not None]
+    if remote_experts:
+        click.echo()
+        click.echo("Remote experts:")
+        for e in remote_experts:
+            click.echo(f"  {e.name}: {e.endpoint}")
+        click.echo(f"  remote_enforce_https     : {security_cfg.remote_enforce_https}")
+        click.echo(f"  remote_allow_private_nets: {security_cfg.remote_allow_private_networks}")
+        allowlist = security_cfg.remote_endpoint_allowlist
+        if allowlist:
+            click.echo(f"  remote_endpoint_allowlist: {allowlist}")
+        else:
+            click.echo(f"  remote_endpoint_allowlist: " + click.style("(none — all hosts allowed)", fg="yellow"))
+            if apmoe_cfg.environment == "production":
+                warnings.append(
+                    "Remote experts configured in production without an explicit "
+                    "security.remote_endpoint_allowlist."
+                )
+
+    # --- Retry / Circuit breaker ---
+    retry = apmoe_cfg.remote_retry
+    cb = apmoe_cfg.remote_circuit_breaker
+    click.echo()
+    click.echo("Remote retry policy:")
+    click.echo(f"  max_attempts     : {retry.max_attempts}")
+    click.echo(f"  initial_delay_s  : {retry.initial_delay_s}")
+    click.echo(f"  max_delay_s      : {retry.max_delay_s}")
+    click.echo(f"  backoff_multiplier: {retry.backoff_multiplier}")
+    click.echo(f"  jitter           : {retry.jitter}")
+    click.echo()
+    click.echo("Circuit breaker:")
+    click.echo(f"  enabled          : " + (click.style("yes", fg="green") if cb.enabled else click.style("no", fg="yellow")))
+    click.echo(f"  failure_threshold: {cb.failure_threshold}")
+    click.echo(f"  recovery_timeout : {cb.recovery_timeout_s}s")
+
+    # --- Audit ---
+    click.echo()
+    click.echo("Audit logging:")
+    click.echo(f"  audit_enabled      : " + (click.style("yes", fg="green") if security_cfg.audit_enabled else click.style("no", fg="yellow")))
+    click.echo(f"  audit_success_events: {security_cfg.audit_success_events}")
+
+    # --- Print collected warnings ---
+    if warnings:
+        click.echo()
+        click.echo(click.style("Warnings:", fg="yellow"))
+        for w in warnings:
+            click.echo(click.style(f"  ⚠  {w}", fg="yellow"))
+

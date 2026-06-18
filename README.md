@@ -107,6 +107,13 @@ and secret redaction. See
 [`docs/dev/security.md`](docs/dev/security.md) for the full reference and
 production checklist.
 
+### Operations and deployment
+
+Deployment trade-offs, Lambda-style serverless guidance, dedicated
+infrastructure guidance, fallback behavior, hot swapping, rollout/rollback,
+autoscaling, bandwidth estimates, and vendor SLA recommendations are documented
+in [`docs/deployment_sla_fallback.md`](docs/deployment_sla_fallback.md).
+
 ### Confidence scores
 
 Per-expert outputs include a `confidence` field. Values are in **`[0.0, 1.0]`** when the model reports a meaningful score (for example, the keystroke ONNX classifier uses the maximum class probability). The bundled **face (Keras) regressor** does not produce a calibrated confidence: it reports **`-1.0`**, meaning *not applicable / not reported*. The aggregated prediction’s `confidence` remains in `[0.0, 1.0]`. See `docs/face_integration.md` and `docs/dev/core/types.md` for details.
@@ -123,13 +130,9 @@ Please cite this project and datasets appropriately when using or referring to r
 
 ## License
 
-The code in this repository is licensed under the Apache 2.0 License for academic and research purposes.
+APMoE is licensed under the MIT License. See [LICENSE](LICENSE) for the
+canonical license text and [`docs/licensing.md`](docs/licensing.md) for
+dataset, model artifact, and redistribution guidance.
 
-**IMPORTANT:**
-
-- The datasets used in this project are subject to their respective license agreements.
-- Redistribution of datasets is **not permitted**; users must obtain datasets directly from their sources.
-- This project and its code are for **non-commercial use only**.
-- Users **must provide attribution** to the original dataset owners and project creators before using any derived models or results.
-
-By using this repository, you agree to adhere to these licensing and attribution requirements.
+Datasets referenced by the project are not redistributed and remain governed by
+their original licenses.
