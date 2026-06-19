@@ -109,8 +109,8 @@ boolean env values raise `ConfigurationError`.
 
 ## JWT Bearer Provider
 
-`JWTBearerAuthProvider` is the built-in stateless provider. It is imported only
-when used and requires `pip install apmoe[security]`.
+`JWTBearerAuthProvider` is the built-in stateless provider. Security
+dependencies are included in the default `pip install apmoe` runtime.
 
 It validates:
 
@@ -203,7 +203,7 @@ Config-driven Redis selection:
 }
 ```
 
-Install Redis support with `pip install apmoe[redis]`.
+Redis client support is included in the default `pip install apmoe` runtime.
 
 Important scaling rule: the in-memory store does not share revocation state
 across processes or machines. Horizontal deployments that require logout,
@@ -370,9 +370,9 @@ Local model artifacts can be hash-pinned with SHA-256:
 ```json
 {
   "name": "face_age_expert",
-  "class": "apmoe.experts.builtin.CNNAgeExpert",
+  "class": "apmoe.experts.builtin.FaceAgeExpert",
   "weights": "./weights/face_age_expert.keras",
-  "modalities": ["visual"],
+  "modalities": ["image"],
   "integrity": {
     "sha256": "64-character-hex-digest"
   }

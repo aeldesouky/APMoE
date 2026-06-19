@@ -53,10 +53,11 @@ it has no runtime effect on behaviour.
 
 ```python
 from apmoe.experts.base import ExpertPlugin
+from apmoe.experts.registry import expert_registry
 from apmoe.core.types import ProcessedInput, ExpertOutput
 
-@expert_registry.register("cnn_age_expert")
-class CNNAgeExpert(ExpertPlugin):
+@expert_registry.register("image_age_expert")
+class ImageAgeExpert(ExpertPlugin):
     ...
 ```
 
@@ -81,7 +82,7 @@ By default, re-registering the same key raises `RegistryError`. Pass
 `overwrite=True` to replace silently:
 
 ```python
-expert_registry.register_class("cnn_age_expert", ImprovedExpert, overwrite=True)
+expert_registry.register_class("image_age_expert", ImprovedExpert, overwrite=True)
 ```
 
 ---
@@ -91,7 +92,7 @@ expert_registry.register_class("cnn_age_expert", ImprovedExpert, overwrite=True)
 ### `get(key)` — by registered name
 
 ```python
-cls = expert_registry.get("cnn_age_expert")
+cls = expert_registry.get("image_age_expert")
 instance = cls()
 ```
 
@@ -102,7 +103,7 @@ available keys.
 
 ```python
 # Short registered name
-cls = expert_registry.resolve("cnn_age_expert")
+cls = expert_registry.resolve("image_age_expert")
 
 # Fully-qualified dotted path (imported on demand, no prior registration needed)
 cls = expert_registry.resolve("myproject.experts.CustomExpert")
@@ -115,7 +116,7 @@ Resolution order:
 3. If neither matches, raise `RegistryError`.
 
 This is how config file class paths like
-`"apmoe.experts.builtin.CNNAgeExpert"` are resolved at bootstrap — the
+`"apmoe.experts.builtin.FaceAgeExpert"` are resolved at bootstrap — the
 framework calls `registry.resolve(config_value)` for every component in the
 config.
 
@@ -126,10 +127,10 @@ config.
 ```python
 # All registered names, sorted alphabetically
 expert_registry.list_registered()
-# → ['audio_expert', 'cnn_age_expert', 'eeg_expert']
+# → ['face_age_expert', 'image_age_expert', 'keystroke_age_expert']
 
 # Membership test
-"cnn_age_expert" in expert_registry   # → True
+"image_age_expert" in expert_registry # → True
 
 # Count
 len(expert_registry)                  # → 3

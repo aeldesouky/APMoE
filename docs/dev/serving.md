@@ -132,7 +132,8 @@ Important deployment note:
 - `serving.rate_limit_store="memory"` is process-local. With multiple workers,
   effective total limit is multiplied by worker count.
 - `serving.rate_limit_store="redis"` uses Redis as the shared sliding-window
-  store across workers and nodes. Install it with `pip install apmoe[redis]`.
+  store across workers and nodes. Redis client support is included in the
+  default `pip install apmoe` runtime.
 - If a Redis rate-limit operation fails after startup, APMoE emits
   `redis_rate_limit_fallback` and uses an in-memory process-local sliding
   window for that worker. This preserves API availability but the limit is no
@@ -222,7 +223,7 @@ serving config:
 }
 ```
 
-Install Redis support with `pip install apmoe[redis]`. You can also inject any
+Redis client support is included in the default `pip install apmoe` runtime. You can also inject any
 external implementation through `create_api(..., invalidation_store=...)`:
 
 ```python

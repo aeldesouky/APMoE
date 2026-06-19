@@ -91,16 +91,15 @@ dependencies keep their own licenses. Redistributing an application that embeds
 APMoE should include any third-party notices required by the dependency set
 actually shipped with that application.
 
-Dependency groups in `pyproject.toml` matter for notices:
+The default `pip install apmoe` runtime includes the framework, serving,
+remote, security, Redis client, image, ONNX, TensorFlow, and Torch
+dependencies. Runtime extra names remain as compatibility aliases but do not
+add additional dependencies.
 
-| Install path | Extra dependencies likely present | Notice impact |
+| Install path | Runtime dependencies likely present | Notice impact |
 |---|---|---|
-| Core install | Click, Pydantic, NumPy | Include notices for the framework runtime shipped in the application image. |
-| `apmoe[serve]` | FastAPI, Uvicorn, python-multipart | Include notices for the HTTP serving stack. |
-| `apmoe[models]` | Pillow, ONNX Runtime, TensorFlow/Keras | Include notices for local demo expert runtime dependencies. |
-| `apmoe[remote]` | HTTPX | Include notices for remote expert HTTP client dependencies. |
-| `apmoe[security]` | PyJWT, cryptography | Include crypto-library notices and comply with export/security review policies where applicable. |
-| `apmoe[redis]` | redis client | Include Redis client notices; the Redis server itself is an infrastructure dependency. |
+| `apmoe` | Click, Pydantic, NumPy, FastAPI, Uvicorn, python-multipart, Pillow, ONNX Runtime, TensorFlow/Keras, Torch, HTTPX, PyJWT, cryptography, redis client | Include notices for all runtime dependencies; comply with crypto-library export/security review policies where applicable. |
+| Runtime alias extras such as `apmoe[serve]`, `apmoe[security]`, or `apmoe[redis]` | Same as `apmoe`; dependencies are already included by default | Same notice set as `apmoe`. |
 | `apmoe[dev]` | pytest, ruff, mypy, pre-commit | Usually development-only; not included in production redistribution unless packaged into the image. |
 
 ## Recommended Distribution Checklist

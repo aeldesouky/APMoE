@@ -31,32 +31,20 @@ Datasets are **not included** in this repository due to licensing restrictions b
 
 ## Installation
 
-APMoE requires **Python 3.11+**. The base package is intentionally lightweight:
-it installs the framework core, public types, registries, config loader, and CLI
-without shipping model artifacts or heavyweight ML backends.
+APMoE requires **Python 3.11+**. The default package installs the framework,
+CLI, serving stack, local/remote expert runtimes, security features, Redis
+client integration, and ML backends. PyPI wheels still do **not** ship model
+artifact files; download or provide those explicitly.
 
 ```bash
 pip install apmoe
 ```
 
-For the built-in serving stack and demo experts, install the relevant extras:
-
-```bash
-pip install "apmoe[serve,models]"
-```
-
-Common extras:
+Optional extras:
 
 | Extra | Adds |
 |---|---|
-| `serve` | FastAPI, Uvicorn, multipart upload support |
-| `image` | Pillow image decoding |
-| `onnx` | ONNX Runtime for `KeystrokeAgeExpert` |
-| `tensorflow` | TensorFlow / TensorFlow macOS for `FaceAgeExpert` |
-| `remote` | HTTPX for remote experts |
-| `security` | JWT and cryptography support |
-| `redis` | Redis-backed auth invalidation and rate limiting |
-| `models` | Runtime dependencies for the bundled/demo experts |
+| `serve`, `image`, `onnx`, `tensorflow`, `torch`, `remote`, `security`, `redis`, `models` | Backward-compatible aliases; these runtime dependencies are already included by default |
 | `dev` | Test, lint, type-check, build, and publishing tools |
 
 ### From Source
@@ -88,6 +76,11 @@ Common extras:
 APMoE is designed as a framework package: install the runtime you need, create a
 project scaffold, then provide or download model artifacts explicitly.
 
+For a full walkthrough that covers installation extras, project scaffolding,
+local extensions, package entry-point extensions, local and remote experts,
+remote-to-local fallback, Redis-backed stores, and serving, see
+[`docs/user_guide.md`](docs/user_guide.md).
+
 ### 1. Scaffolding a Local Project
 Create a runnable configuration:
 ```bash
@@ -108,7 +101,7 @@ apmoe download-models --dest weights
 When running from a source checkout, `apmoe init my_app --builtin` uses the same
 model acquisition path and can copy local demo artifacts into the scaffold. PyPI
 wheels do not bundle model files; set `APMOE_MODEL_SOURCE_DIR` or provide your
-own weights when using a lightweight wheel.
+own weights.
 
 The scaffold is local-only by default. When you run `apmoe validate`,
 `apmoe serve`, or `apmoe predict`, the CLI prints an expert summary showing
@@ -158,6 +151,13 @@ After installation, configs may use those short names:
 ```json
 { "class": "my_expert" }
 ```
+
+Remote experts can be mixed with local experts by configuring `endpoint`
+instead of `weights`, and can name a standby local expert with
+`fallback_expert`. Redis-backed rate limiting and JWT invalidation are included
+in the default install. See
+[`docs/user_guide.md`](docs/user_guide.md) and
+[`docs/dev/configuration.md`](docs/dev/configuration.md) for complete examples.
 
 ### API versioning
 

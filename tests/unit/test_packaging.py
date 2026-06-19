@@ -11,16 +11,31 @@ def _pyproject() -> dict[str, object]:
     return tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
 
 
-def test_default_dependencies_are_lightweight() -> None:
-    """The base install should not pull heavyweight runtime backends."""
+def test_default_dependencies_include_runtime_integrations() -> None:
+    """The base install should include framework, serving, security, and ML runtimes."""
     project = _pyproject()["project"]  # type: ignore[index]
     dependencies = set(project["dependencies"])  # type: ignore[index]
 
-    assert dependencies == {"click>=8.1", "numpy>=1.26", "pydantic>=2.5"}
+    assert {
+        "click>=8.1",
+        "cryptography>=42.0",
+        "fastapi>=0.110",
+        "httpx>=0.27",
+        "numpy>=1.26",
+        "onnxruntime>=1.17",
+        "pillow>=10.0",
+        "pydantic>=2.5",
+        "PyJWT[crypto]>=2.8",
+        "python-multipart>=0.0.22",
+        "redis>=5.0",
+        "torch>=2.2",
+        "uvicorn[standard]>=0.29",
+    }.issubset(dependencies)
+    assert any(dep.startswith("tensorflow>=2.15") for dep in dependencies)
 
 
 def test_expected_optional_extras_exist() -> None:
-    """Runtime backends and development tools are grouped behind extras."""
+    """Runtime extra names remain as compatibility aliases; dev installs tools."""
     project = _pyproject()["project"]  # type: ignore[index]
     extras = project["optional-dependencies"]  # type: ignore[index]
 
@@ -36,6 +51,19 @@ def test_expected_optional_extras_exist() -> None:
         "models",
         "dev",
     }.issubset(extras)
+    for alias in (
+        "serve",
+        "image",
+        "onnx",
+        "tensorflow",
+        "torch",
+        "remote",
+        "security",
+        "redis",
+        "models",
+    ):
+        assert extras[alias] == []
+    assert "pytest>=8.0" in extras["dev"]
 
 
 def test_model_artifacts_are_excluded_from_builds() -> None:

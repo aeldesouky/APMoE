@@ -230,12 +230,11 @@ class MobileNetEmbedder(EmbedderStrategy):
 
 ```json
 {
-  "name": "visual",
-  "processor": "myproject.processors.MyVisualProcessor",
+  "name": "image",
+  "processor": "myproject.processors.MyImageProcessor",
   "pipeline": {
     "cleaner":    "myproject.cleaners.ImageCleaner",
-    "anonymizer": "myproject.anonymizers.FaceAnonymizer",
-    "embedder":   "myproject.embedders.MobileNetEmbedder"
+    "anonymizer": "myproject.anonymizers.ImageAnonymizer"
   }
 }
 ```
@@ -245,28 +244,26 @@ Each value is a dotted import path or a short registered name.
 
 ---
 
-## Built-in implementations (Phase 6)
+## Built-in implementations
 
 ### Cleaners
 
 | Class | Path | Modality |
 |---|---|---|
-| `ImageCleaner` | `apmoe.processing.builtin.cleaners.ImageCleaner` | `"visual"` |
-| `AudioCleaner` | `apmoe.processing.builtin.cleaners.AudioCleaner` | `"audio"` |
-| `EEGCleaner` | `apmoe.processing.builtin.cleaners.EEGCleaner` | `"eeg"` |
+| `ImageCleaner` | `apmoe.processing.builtin.image_cleaners.ImageCleaner` | `"image"` |
+| `KeystrokeCleaner` | `apmoe.processing.builtin.cleaners.KeystrokeCleaner` | `"keystroke"` |
+| `Base64ImageCleaner` | `apmoe.processing.llm.Base64ImageCleaner` | `"image"` |
 
 ### Anonymisers
 
 | Class | Path | Technique |
 |---|---|---|
-| `FaceAnonymizer` | `apmoe.processing.builtin.anonymizers.FaceAnonymizer` | Face detection + Gaussian blur |
-| `VoiceAnonymizer` | `apmoe.processing.builtin.anonymizers.VoiceAnonymizer` | Pitch perturbation |
-| `EEGAnonymizer` | `apmoe.processing.builtin.anonymizers.EEGAnonymizer` | Channel dropout + noise |
+| `ImageAnonymizer` | `apmoe.processing.builtin.image_anonymizers.ImageAnonymizer` | Image anonymization |
+| `KeystrokeAnonymizer` | `apmoe.processing.builtin.anonymizers.KeystrokeAnonymizer` | Keystroke metadata anonymization |
+| `PassthroughImageAnonymizer` | `apmoe.processing.llm.PassthroughImageAnonymizer` | No-op for LLM image dispatch |
 
 ### Embedders
 
-| Class | Path | Output dim | Modality |
-|---|---|---|---|
-| `MobileNetEmbedder` | `apmoe.processing.builtin.embedders.MobileNetEmbedder` | 1280 | `"visual"` |
-| `MelSpectrogramEmbedder` | `apmoe.processing.builtin.embedders.MelSpectrogramEmbedder` | configurable | `"audio"` |
-| `EEGEmbedder` | `apmoe.processing.builtin.embedders.EEGEmbedder` | configurable | `"eeg"` |
+APMoE does not require a built-in embedder. Omit `pipeline.embedder` when an
+expert consumes `ModalityData` directly, or provide a dotted path/entry point
+for a custom `EmbedderStrategy` when an expert expects an `EmbeddingResult`.

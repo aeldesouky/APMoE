@@ -3,6 +3,9 @@
 The APMoE CLI is the fastest way to scaffold projects, validate configuration,
 run local predictions, and start the HTTP service.
 
+For the end-to-end install and project workflow, see
+[`../user_guide.md`](../user_guide.md).
+
 ---
 
 ## Command map
@@ -53,8 +56,8 @@ Notes:
   non-interactive scripts.
 - `apmoe init --builtin` uses the same acquisition helper as
   `apmoe download-models`. Source checkouts can copy local demo artifacts;
-  lightweight wheels require `APMOE_MODEL_SOURCE_DIR` or per-artifact model
-  source environment variables.
+  PyPI wheels require `APMOE_MODEL_SOURCE_DIR` or per-artifact model source
+  environment variables because model binaries are not included.
 
 ---
 
@@ -125,9 +128,9 @@ apmoe predict --config config.json --input data/
 Supported input modes:
 
 1. Directory mode: file stem must match modality name.
-   - Example: `visual.jpg` is used for modality `visual`.
+   - Example: `image.jpg` is used for modality `image`.
 2. JSON manifest mode (`.json`): maps modality names to file paths.
-   - Example: `{"visual": "face.jpg", "audio": "clip.wav"}`
+   - Example: `{"image": "face.jpg", "keystroke": "session.json"}`
 
 Output behavior:
 - Without `--output`, prediction JSON is printed to stdout.

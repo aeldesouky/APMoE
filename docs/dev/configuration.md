@@ -35,6 +35,138 @@ and `remote_circuit_breaker` are **optional** — all their fields have defaults
 
 ---
 
+## Common Configuration Recipes
+
+Use these recipes as starting points, then consult the field reference below.
+
+### Local-Only Built-In Experts
+
+Install:
+
+```bash
+pip install apmoe
+apmoe init my_app --download-models
+cd my_app
+apmoe validate --config config.json
+```
+
+Config shape:
+
+```json
+{
+  "name": "face_age_expert",
+  "class": "apmoe.experts.builtin.FaceAgeExpert",
+  "weights": "./weights/face_age_expert.keras",
+  "modalities": ["image"]
+}
+```
+
+Local experts use `weights`. The default install includes ONNX, TensorFlow,
+Torch, Pillow, remote HTTP, security, and Redis client dependencies. Model
+artifact files are still downloaded or provided separately.
+
+### Application-Local Extensions
+
+For code inside a scaffolded project, use dotted paths:
+
+```json
+{
+  "processor": "custom_processor.MyImageProcessor"
+}
+```
+
+```json
+{
+  "class": "custom_expert.MyAgeExpert"
+}
+```
+
+The class must be importable from the working directory or installed package
+environment.
+
+### Installed Extension Packages
+
+For reusable packages, expose entry points:
+
+```toml
+[project.entry-points."apmoe.experts"]
+my_expert = "my_package.experts:MyExpert"
+```
+
+After `pip install my-package`, use the short name:
+
+```json
+{
+  "class": "my_expert"
+}
+```
+
+APMoE discovers entry points during `APMoEApp.from_config()`.
+
+### Remote Primary With Local Fallback
+
+Install:
+
+```bash
+pip install apmoe
+```
+
+Config shape:
+
+```json
+{
+  "remote_fallback_policy": "transient_only",
+  "experts": [
+    {
+      "name": "remote_face",
+      "class": "apmoe.experts.remote.RemoteExpert",
+      "endpoint": "$REMOTE_FACE_ENDPOINT",
+      "modalities": ["image"],
+      "fallback_expert": "local_face_standby"
+    },
+    {
+      "name": "local_face_standby",
+      "class": "apmoe.experts.builtin.FaceAgeExpert",
+      "weights": "./weights/face_age_expert.keras",
+      "modalities": ["image"],
+      "fallback_only": true
+    }
+  ]
+}
+```
+
+Use `transient_only` for outages and rate-limit style failures,
+`any_remote_error` for aggressive degradation, and `disabled` to turn paired
+fallback off.
+
+### Redis-Backed Serving
+
+Install:
+
+```bash
+pip install apmoe
+```
+
+Config shape:
+
+```json
+{
+  "serving": {
+    "rate_limit": 120,
+    "rate_limit_store": "redis",
+    "rate_limit_redis_url": "$APMOE_REDIS_URL",
+    "token_invalidation_store": "redis",
+    "token_invalidation_redis_url": "$APMOE_REDIS_URL"
+  }
+}
+```
+
+Redis shares rate-limit and JWT invalidation state across workers and nodes.
+If Redis operations fail after startup, APMoE falls back to process-local
+memory and emits audit events.
+
+---
+
 ## `modalities` — array, required
 
 Each entry defines one input modality and its three-step processing chain.
@@ -42,19 +174,18 @@ Modality names must be **unique** across the list.
 
 ```json
 {
-  "name":      "visual",
-  "processor": "apmoe.modality.builtin.visual.VisualProcessor",
+  "name":      "image",
+  "processor": "apmoe.modality.builtin.image.ImageProcessor",
   "pipeline": {
-    "cleaner":    "apmoe.processing.builtin.cleaners.ImageCleaner",
-    "anonymizer": "apmoe.processing.builtin.anonymizers.FaceAnonymizer",
-    "embedder":   "apmoe.processing.builtin.embedders.MobileNetEmbedder"
+    "cleaner":    "apmoe.processing.builtin.image_cleaners.ImageCleaner",
+    "anonymizer": "apmoe.processing.builtin.image_anonymizers.ImageAnonymizer"
   }
 }
 ```
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `name` | string | ✅ | Canonical key for this modality (e.g. `"visual"`, `"audio"`, `"eeg"`). Referenced by `experts[].modalities`. |
+| `name` | string | ✅ | Canonical key for this modality (e.g. `"image"`, `"keystroke"`). Referenced by `experts[].modalities`. |
 | `processor` | string | ✅ | Dotted import path **or** registered name of a `ModalityProcessor` subclass. Responsible for validating and preprocessing raw input into a `ModalityData` object. |
 | `pipeline.cleaner` | string | ✅ | Dotted import path or registered name of a `CleanerStrategy` subclass. Runs first on the `ModalityData`. |
 | `pipeline.anonymizer` | string | ✅ | Dotted import path or registered name of an `AnonymizerStrategy` subclass. Runs after the cleaner. |
@@ -86,9 +217,9 @@ Expert names must be **unique** across the list.
 ```json
 {
   "name":       "face_age_expert",
-  "class":      "apmoe.experts.builtin.CNNAgeExpert",
-  "weights":    "./weights/visual_age_expert.pt",
-  "modalities": ["visual"]
+  "class":      "apmoe.experts.builtin.FaceAgeExpert",
+  "weights":    "./weights/face_age_expert.keras",
+  "modalities": ["image"]
 }
 ```
 
@@ -113,9 +244,9 @@ Local experts may pin a SHA-256 digest for the configured `weights` file:
 ```json
 {
   "name": "face_age_expert",
-  "class": "apmoe.experts.builtin.CNNAgeExpert",
-  "weights": "./weights/visual_age_expert.pt",
-  "modalities": ["visual"],
+  "class": "apmoe.experts.builtin.FaceAgeExpert",
+  "weights": "./weights/face_age_expert.keras",
+  "modalities": ["image"],
   "integrity": {
     "sha256": "64-character-hex-digest"
   }
@@ -151,14 +282,14 @@ release CI or a KMS-backed signing process.
 
 ```json
 {
-  "name":       "audio_age_expert",
-  "class":      "apmoe.experts.builtin.MLPAgeExpert",
-  "weights":    "./weights/audio_age_expert.pt",
-  "modalities": ["audio"]
+  "name":       "keystroke_age_expert",
+  "class":      "apmoe.experts.builtin.KeystrokeAgeExpert",
+  "weights":    "./weights/keystroke_age_expert.onnx",
+  "modalities": ["keystroke"]
 }
 ```
 
-The expert's `predict()` receives `{"audio": <ProcessedInput>}`.
+The expert's `predict()` receives `{"keystroke": <ProcessedInput>}`.
 
 ### Multi-modal expert
 
@@ -167,11 +298,11 @@ The expert's `predict()` receives `{"audio": <ProcessedInput>}`.
   "name":       "multimodal_expert",
   "class":      "myproject.experts.MultiModalExpert",
   "weights":    "./weights/multimodal_expert.pt",
-  "modalities": ["visual", "audio"]
+  "modalities": ["image", "keystroke"]
 }
 ```
 
-The expert's `predict()` receives `{"visual": <ProcessedInput>, "audio": <ProcessedInput>}`.
+The expert's `predict()` receives `{"image": <ProcessedInput>, "keystroke": <ProcessedInput>}`.
 The expert is responsible for combining them internally.
 
 ### Expert with extra parameters
@@ -181,7 +312,7 @@ The expert is responsible for combining them internally.
   "name":       "face_age_expert",
   "class":      "myproject.experts.CalibratedCNNExpert",
   "weights":    "./weights/face.pt",
-  "modalities": ["visual"],
+  "modalities": ["image"],
   "temperature": 1.5,
   "threshold":   0.6
 }
@@ -230,9 +361,8 @@ Defines how individual expert predictions are combined into a single final answe
 {
   "strategy":     "apmoe.aggregation.builtin.WeightedAverageAggregator",
   "weights": {
-    "face_age_expert":  0.5,
-    "audio_age_expert": 0.3,
-    "eeg_age_expert":   0.2
+    "face_age_expert":      0.6,
+    "keystroke_age_expert": 0.4
   }
 }
 ```
@@ -458,11 +588,11 @@ The smallest valid config has one modality and one expert (no `serving` block ne
   "apmoe": {
     "modalities": [
       {
-        "name": "visual",
-        "processor": "myproject.processors.VisualProcessor",
+        "name": "image",
+        "processor": "myproject.processors.ImageProcessor",
         "pipeline": {
           "cleaner":    "myproject.cleaners.ImageCleaner",
-          "anonymizer": "myproject.anonymizers.FaceAnonymizer"
+          "anonymizer": "myproject.anonymizers.ImageAnonymizer"
         }
       }
     ],
@@ -471,7 +601,7 @@ The smallest valid config has one modality and one expert (no `serving` block ne
         "name":       "face_expert",
         "class":      "myproject.experts.FaceExpert",
         "weights":    "./weights/face.pt",
-        "modalities": ["visual"]
+        "modalities": ["image"]
       }
     ],
     "aggregation": {
@@ -490,56 +620,40 @@ The smallest valid config has one modality and one expert (no `serving` block ne
   "apmoe": {
     "modalities": [
       {
-        "name":      "visual",
-        "processor": "apmoe.modality.builtin.visual.VisualProcessor",
+        "name":      "image",
+        "processor": "apmoe.modality.builtin.image.ImageProcessor",
         "pipeline": {
-          "cleaner":    "apmoe.processing.builtin.cleaners.ImageCleaner",
-          "anonymizer": "apmoe.processing.builtin.anonymizers.FaceAnonymizer",
-          "embedder":   "apmoe.processing.builtin.embedders.MobileNetEmbedder"
+          "cleaner":    "apmoe.processing.builtin.image_cleaners.ImageCleaner",
+          "anonymizer": "apmoe.processing.builtin.image_anonymizers.ImageAnonymizer"
         }
       },
       {
-        "name":      "audio",
-        "processor": "apmoe.modality.builtin.audio.AudioProcessor",
+        "name":      "keystroke",
+        "processor": "apmoe.modality.builtin.keystroke.KeystrokeProcessor",
         "pipeline": {
-          "cleaner":    "apmoe.processing.builtin.cleaners.AudioCleaner",
-          "anonymizer": "apmoe.processing.builtin.anonymizers.VoiceAnonymizer"
-        }
-      },
-      {
-        "name":      "eeg",
-        "processor": "apmoe.modality.builtin.eeg.EEGProcessor",
-        "pipeline": {
-          "cleaner":    "apmoe.processing.builtin.cleaners.EEGCleaner",
-          "anonymizer": "apmoe.processing.builtin.anonymizers.EEGAnonymizer",
-          "embedder":   "apmoe.processing.builtin.embedders.EEGEmbedder"
+          "cleaner":    "apmoe.processing.builtin.cleaners.KeystrokeCleaner",
+          "anonymizer": "apmoe.processing.builtin.anonymizers.KeystrokeAnonymizer"
         }
       }
     ],
     "experts": [
       {
         "name":       "face_age_expert",
-        "class":      "apmoe.experts.builtin.CNNAgeExpert",
-        "weights":    "./weights/visual_age_expert.pt",
-        "modalities": ["visual"]
+        "class":      "apmoe.experts.builtin.FaceAgeExpert",
+        "weights":    "./weights/face_age_expert.keras",
+        "modalities": ["image"]
       },
       {
-        "name":       "audio_age_expert",
-        "class":      "apmoe.experts.builtin.MLPAgeExpert",
-        "weights":    "./weights/audio_age_expert.pt",
-        "modalities": ["audio"]
-      },
-      {
-        "name":       "eeg_age_expert",
-        "class":      "apmoe.experts.builtin.EEGAgeExpert",
-        "weights":    "./weights/eeg_age_expert.pt",
-        "modalities": ["eeg"]
+        "name":       "keystroke_age_expert",
+        "class":      "apmoe.experts.builtin.KeystrokeAgeExpert",
+        "weights":    "./weights/keystroke_age_expert.onnx",
+        "modalities": ["keystroke"]
       },
       {
         "name":       "multimodal_expert",
         "class":      "myproject.experts.MultiModalExpert",
         "weights":    "./weights/multimodal.pt",
-        "modalities": ["visual", "audio"],
+        "modalities": ["image", "keystroke"],
         "threshold":  0.7
       }
     ],
@@ -547,8 +661,7 @@ The smallest valid config has one modality and one expert (no `serving` block ne
       "strategy": "apmoe.aggregation.builtin.WeightedAverageAggregator",
       "weights": {
         "face_age_expert":   0.35,
-        "audio_age_expert":  0.25,
-        "eeg_age_expert":    0.15,
+        "keystroke_age_expert":  0.40,
         "multimodal_expert": 0.25
       }
     },

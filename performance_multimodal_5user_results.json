@@ -1,0 +1,18 @@
+[
+  {
+    "mode": "multimodal",
+    "users": 5,
+    "duration_s": 10.0,
+    "wall_seconds": 10.013,
+    "total_requests": 430,
+    "successful_requests": 430,
+    "errors": 0,
+    "error_rate_pct": 0.0,
+    "rps": 42.946,
+    "avg_ms": 116.395,
+    "p50_ms": 115.299,
+    "p95_ms": 135.886,
+    "p99_ms": 144.209,
+    "max_ms": 148.546
+  }
+]

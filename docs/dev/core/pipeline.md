@@ -31,10 +31,10 @@ modality's processing chain:
 from apmoe.core.pipeline import ModalityChain
 
 chain = ModalityChain(
-    processor=MyVisualProcessor(),   # ModalityProcessor
+    processor=MyImageProcessor(),    # ModalityProcessor
     cleaner=MyImageCleaner(),        # CleanerStrategy
-    anonymizer=MyFaceAnonymizer(),   # AnonymizerStrategy
-    embedder=MyMobileNetEmbedder(),  # EmbedderStrategy | None
+    anonymizer=MyImageAnonymizer(),  # AnonymizerStrategy
+    embedder=None,                   # EmbedderStrategy | None
 )
 ```
 

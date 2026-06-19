@@ -6,7 +6,7 @@ its weights once at bootstrap and calls `predict()` for every request.
 
 ```
 ABC:         apmoe.experts.base.ExpertPlugin
-Registry:    apmoe.experts.base.expert_registry
+Registry:    apmoe.experts.registry.expert_registry
 Config key:  experts[].class
 ```
 
@@ -20,17 +20,16 @@ from apmoe.core.types import ProcessedInput, ExpertOutput
 
 class ExpertPlugin(ABC):
 
-    @classmethod
     @abstractmethod
-    def declared_modalities(cls) -> list[str]:
+    def declared_modalities(self) -> list[str]:
         """Return the list of modality names this expert requires.
 
         Called at bootstrap to validate the config and to build the
         dispatch map. The names must match modalities declared in config.
 
         Returns:
-            A non-empty list of modality names, e.g. ["visual"] or
-            ["visual", "audio"].
+            A non-empty list of modality names, e.g. ["image"] or
+            ["image", "keystroke"].
         """
 
     @abstractmethod
@@ -91,21 +90,25 @@ class ExpertPlugin(ABC):
 import torch
 import torch.nn as nn
 
-from apmoe.experts.base import ExpertPlugin, expert_registry
+from apmoe.experts.base import ExpertPlugin
+from apmoe.experts.registry import expert_registry
 from apmoe.core.types import ProcessedInput, EmbeddingResult, ExpertOutput
 from apmoe.core.exceptions import ExpertError
 
 
-@expert_registry.register("cnn_age_expert")
-class CNNAgeExpert(ExpertPlugin):
+@expert_registry.register("image_age_expert")
+class ImageAgeExpert(ExpertPlugin):
     """Predicts age from a pre-computed MobileNet embedding."""
 
     def __init__(self) -> None:
         self.model: nn.Module | None = None
 
-    @classmethod
-    def declared_modalities(cls) -> list[str]:
-        return ["visual"]
+    @property
+    def name(self) -> str:
+        return "image_age_expert"
+
+    def declared_modalities(self) -> list[str]:
+        return ["image"]
 
     def load_weights(self, path: str) -> None:
         try:
@@ -114,13 +117,13 @@ class CNNAgeExpert(ExpertPlugin):
         except Exception as exc:
             raise ExpertError(
                 f"Failed to load weights: {exc}",
-                context={"expert_name": "cnn_age_expert", "weights_path": path},
+                context={"expert_name": self.name, "weights_path": path},
             ) from exc
 
     def predict(self, inputs: dict[str, ProcessedInput]) -> ExpertOutput:
         assert self.model is not None, "load_weights() not called"
 
-        inp = inputs["visual"]
+        inp = inputs["image"]
 
         # Accept either a pre-computed embedding or raw tensor
         if isinstance(inp, EmbeddingResult):
@@ -136,8 +139,8 @@ class CNNAgeExpert(ExpertPlugin):
         age = float(age_logit.squeeze())
 
         return ExpertOutput(
-            expert_name="cnn_age_expert",
-            consumed_modalities=["visual"],
+            expert_name=self.name,
+            consumed_modalities=["image"],
             predicted_age=age,
             confidence=0.88,
         )
@@ -151,37 +154,40 @@ A multi-modal expert declares two or more modalities. The framework dispatches
 all of them together. The expert is responsible for combining them internally.
 
 ```python
-@expert_registry.register("av_age_expert")
-class AudioVisualAgeExpert(ExpertPlugin):
-    """Fuses audio and visual features for a joint age estimate."""
+@expert_registry.register("image_keystroke_age_expert")
+class ImageKeystrokeAgeExpert(ExpertPlugin):
+    """Fuses image and keystroke features for a joint age estimate."""
 
     def __init__(self) -> None:
-        self.audio_branch: nn.Module | None = None
-        self.visual_branch: nn.Module | None = None
+        self.keystroke_branch: nn.Module | None = None
+        self.image_branch: nn.Module | None = None
         self.fusion_head: nn.Module | None = None
 
-    @classmethod
-    def declared_modalities(cls) -> list[str]:
-        return ["visual", "audio"]   # framework dispatches both
+    @property
+    def name(self) -> str:
+        return "image_keystroke_age_expert"
+
+    def declared_modalities(self) -> list[str]:
+        return ["image", "keystroke"]   # framework dispatches both
 
     def load_weights(self, path: str) -> None:
         checkpoint = torch.load(path, map_location="cpu")
-        self.audio_branch = checkpoint["audio_branch"]
-        self.visual_branch = checkpoint["visual_branch"]
+        self.keystroke_branch = checkpoint["keystroke_branch"]
+        self.image_branch = checkpoint["image_branch"]
         self.fusion_head = checkpoint["fusion_head"]
-        for m in (self.audio_branch, self.visual_branch, self.fusion_head):
+        for m in (self.keystroke_branch, self.image_branch, self.fusion_head):
             m.eval()
 
     def predict(self, inputs: dict[str, ProcessedInput]) -> ExpertOutput:
-        v_feat = self._extract(inputs["visual"], self.visual_branch)
-        a_feat = self._extract(inputs["audio"], self.audio_branch)
+        image_feat = self._extract(inputs["image"], self.image_branch)
+        key_feat = self._extract(inputs["keystroke"], self.keystroke_branch)
 
         with torch.inference_mode():
-            age = float(self.fusion_head(torch.cat([v_feat, a_feat], dim=-1)))
+            age = float(self.fusion_head(torch.cat([image_feat, key_feat], dim=-1)))
 
         return ExpertOutput(
-            expert_name="av_age_expert",
-            consumed_modalities=["visual", "audio"],
+            expert_name=self.name,
+            consumed_modalities=["image", "keystroke"],
             predicted_age=age,
             confidence=0.91,
         )
@@ -205,7 +211,7 @@ passed to the expert's constructor. Access them via `__init__`:
   "name":        "calibrated_expert",
   "class":       "myproject.experts.CalibratedExpert",
   "weights":     "./weights/calibrated.pt",
-  "modalities":  ["visual"],
+  "modalities":  ["image"],
   "temperature": 1.5,
   "bias":        -0.3
 }
@@ -245,16 +251,16 @@ class CalibratedExpert(ExpertPlugin):
 {
   "experts": [
     {
-      "name":       "cnn_age_expert",
-      "class":      "myproject.experts.CNNAgeExpert",
-      "weights":    "./weights/cnn.pt",
-      "modalities": ["visual"]
+      "name":       "image_age_expert",
+      "class":      "myproject.experts.ImageAgeExpert",
+      "weights":    "./weights/image.pt",
+      "modalities": ["image"]
     },
     {
-      "name":       "av_age_expert",
-      "class":      "myproject.experts.AudioVisualAgeExpert",
-      "weights":    "./weights/av_fusion.pt",
-      "modalities": ["visual", "audio"]
+      "name":       "image_keystroke_age_expert",
+      "class":      "myproject.experts.ImageKeystrokeAgeExpert",
+      "weights":    "./weights/image_keystroke_fusion.pt",
+      "modalities": ["image", "keystroke"]
     }
   ]
 }
@@ -272,10 +278,11 @@ Expert outputs that arrive from available experts are still aggregated normally.
 
 ---
 
-## Built-in experts (Phase 6)
+## Built-in experts
 
 | Class | Path | Modalities |
 |---|---|---|
-| `CNNAgeExpert` | `apmoe.experts.builtin.CNNAgeExpert` | `["visual"]` |
-| `MLPAgeExpert` | `apmoe.experts.builtin.MLPAgeExpert` | `["audio"]` |
-| `EEGAgeExpert` | `apmoe.experts.builtin.EEGAgeExpert` | `["eeg"]` |
+| `FaceAgeExpert` | `apmoe.experts.builtin.FaceAgeExpert` | `["image"]` |
+| `KeystrokeAgeExpert` | `apmoe.experts.builtin.KeystrokeAgeExpert` | `["keystroke"]` |
+| `RemoteExpert` | `apmoe.experts.remote.RemoteExpert` | Configured per expert |
+| `LMStudioExpert` | `apmoe.experts.providers.lmstudio.LMStudioExpert` | Usually `["image"]` |

@@ -227,9 +227,8 @@ def aggregate(self, outputs: list[ExpertOutput]) -> Prediction:
   "aggregation": {
     "strategy": "myproject.aggregators.WeightedAverageAggregator",
     "weights": {
-      "face_expert":  0.5,
-      "audio_expert": 0.3,
-      "eeg_expert":   0.2
+      "face_expert":      0.6,
+      "keystroke_expert": 0.4
     }
   }
 }

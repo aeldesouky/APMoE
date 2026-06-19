@@ -6,7 +6,7 @@ them into a `ModalityData` object that the rest of the pipeline can work with.
 
 ```
 ABC:         apmoe.modality.base.ModalityProcessor
-Registry:    apmoe.modality.base.modality_registry
+Registry:    apmoe.modality.factory.modality_registry
 Config key:  modalities[].processor
 ```
 
@@ -19,6 +19,11 @@ from abc import ABC, abstractmethod
 from apmoe.core.types import ModalityData
 
 class ModalityProcessor(ABC):
+
+    @property
+    @abstractmethod
+    def modality_name(self) -> str:
+        """Return the canonical modality name declared in config."""
 
     @abstractmethod
     def validate(self, data: bytes) -> bool:
@@ -63,16 +68,21 @@ import io
 import numpy as np
 from PIL import Image
 
-from apmoe.modality.base import ModalityProcessor, modality_registry
+from apmoe.modality.base import ModalityProcessor
+from apmoe.modality.factory import modality_registry
 from apmoe.core.types import ModalityData
 
 
-@modality_registry.register("my_visual_processor")
-class MyVisualProcessor(ModalityProcessor):
+@modality_registry.register("my_image_processor")
+class MyImageProcessor(ModalityProcessor):
 
     TARGET_SIZE = (224, 224)
     MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
     STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+
+    @property
+    def modality_name(self) -> str:
+        return "image"
 
     def validate(self, data: bytes) -> bool:
         # Reject empty payloads; try to open as an image
@@ -90,7 +100,7 @@ class MyVisualProcessor(ModalityProcessor):
         arr = (np.array(img, dtype=np.float32) / 255.0 - self.MEAN) / self.STD
         tensor = arr.transpose(2, 0, 1)   # H×W×C → C×H×W
         return ModalityData(
-            modality="visual",
+            modality=self.modality_name,
             data=tensor,
             metadata={"original_size": img.size},
             source="http_upload",
@@ -100,8 +110,8 @@ class MyVisualProcessor(ModalityProcessor):
 ```json
 {
   "modalities": [{
-    "name":      "visual",
-    "processor": "myproject.processors.MyVisualProcessor",
+    "name":      "image",
+    "processor": "myproject.processors.MyImageProcessor",
     "pipeline":  { ... }
   }]
 }
@@ -139,12 +149,11 @@ class MyVisualProcessor(ModalityProcessor):
 
 ```json
 {
-  "name":      "visual",
-  "processor": "myproject.processors.MyVisualProcessor",
+  "name":      "image",
+  "processor": "myproject.processors.MyImageProcessor",
   "pipeline": {
     "cleaner":    "myproject.cleaners.ImageCleaner",
-    "anonymizer": "myproject.anonymizers.FaceAnonymizer",
-    "embedder":   "myproject.embedders.MobileNetEmbedder"
+    "anonymizer": "myproject.anonymizers.ImageAnonymizer"
   }
 }
 ```
@@ -155,10 +164,9 @@ previously passed to `@modality_registry.register(...)`. See
 
 ---
 
-## Built-in processors (Phase 6)
+## Built-in processors
 
 | Class | Dotted path | Modality |
 |---|---|---|
-| `VisualProcessor` | `apmoe.modality.builtin.visual.VisualProcessor` | `"visual"` |
-| `AudioProcessor` | `apmoe.modality.builtin.audio.AudioProcessor` | `"audio"` |
-| `EEGProcessor` | `apmoe.modality.builtin.eeg.EEGProcessor` | `"eeg"` |
+| `ImageProcessor` | `apmoe.modality.builtin.image.ImageProcessor` | `"image"` |
+| `KeystrokeProcessor` | `apmoe.modality.builtin.keystroke.KeystrokeProcessor` | `"keystroke"` |

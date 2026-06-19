@@ -71,6 +71,7 @@ Raw input (bytes / file)
 
 | Document | What it covers |
 |---|---|
+| [../user_guide.md](../user_guide.md) | End-to-end user workflow: install, scaffold, extend, configure local/remote experts, fallback, Redis, serve |
 | [configuration.md](configuration.md) | Full JSON config reference and environment variable overrides |
 | [core/types.md](core/types.md) | Pipeline data types: `ModalityData`, `EmbeddingResult`, `ExpertOutput`, `Prediction` |
 | [core/exceptions.md](core/exceptions.md) | Exception hierarchy — when each error is raised and how to handle it |
@@ -89,6 +90,7 @@ Raw input (bytes / file)
 | [extension-points/expert-plugin.md](extension-points/expert-plugin.md) | How to implement `ExpertPlugin` |
 | [extension-points/aggregator.md](extension-points/aggregator.md) | How to implement `AggregatorStrategy` |
 | [testing.md](testing.md) | Testing strategy — unit, boundary, and integration test layers |
+| [publishing.md](publishing.md) | Maintainer release flow for GitHub Actions and PyPI Trusted Publishing |
 
 ---
 
@@ -102,6 +104,20 @@ uv add apmoe
 pip install apmoe
 ```
 
+The default install includes serving, remote experts, security, Redis client
+integration, and ML runtimes. Model files are still acquired separately.
+
+Create a scaffold:
+
+```bash
+apmoe init my_app
+cd my_app
+apmoe validate --config config.json
+```
+
+For the full application-owner path, including remote experts, local fallback,
+and Redis-backed stores, start with [../user_guide.md](../user_guide.md).
+
 **2. Write a config file**
 
 ```json
@@ -109,11 +125,11 @@ pip install apmoe
   "apmoe": {
     "modalities": [
       {
-        "name": "visual",
-        "processor": "myproject.processors.VisualProcessor",
+        "name": "image",
+        "processor": "myproject.processors.ImageProcessor",
         "pipeline": {
           "cleaner":    "myproject.cleaners.ImageCleaner",
-          "anonymizer": "myproject.anonymizers.FaceAnonymizer"
+          "anonymizer": "myproject.anonymizers.ImageAnonymizer"
         }
       }
     ],
@@ -122,7 +138,7 @@ pip install apmoe
         "name":       "face_expert",
         "class":      "myproject.experts.FaceExpert",
         "weights":    "./weights/face.pt",
-        "modalities": ["visual"]
+        "modalities": ["image"]
       }
     ],
     "aggregation": {
@@ -139,13 +155,13 @@ pip install apmoe
 from apmoe.modality.base import ModalityProcessor
 from apmoe.core.types import ModalityData
 
-class VisualProcessor(ModalityProcessor):
+class ImageProcessor(ModalityProcessor):
     def validate(self, data: bytes) -> bool:
         return len(data) > 0
 
     def preprocess(self, data: bytes) -> ModalityData:
         # decode, resize, normalise ...
-        return ModalityData(modality="visual", data=tensor)
+        return ModalityData(modality="image", data=tensor)
 ```
 
 ```python
@@ -156,14 +172,14 @@ from apmoe.core.types import ProcessedInput, ExpertOutput
 class FaceExpert(ExpertPlugin):
     @classmethod
     def declared_modalities(cls) -> list[str]:
-        return ["visual"]
+        return ["image"]
 
     def load_weights(self, path: str) -> None:
         self.model = torch.load(path)
 
     def predict(self, inputs: dict[str, ProcessedInput]) -> ExpertOutput:
-        age = float(self.model(inputs["visual"].data))
-        return ExpertOutput("face_expert", ["visual"], age, confidence=0.9)
+        age = float(self.model(inputs["image"].data))
+        return ExpertOutput("face_expert", ["image"], age, confidence=0.9)
 ```
 
 **4. Bootstrap and predict**
@@ -175,19 +191,19 @@ from apmoe import APMoEApp
 app = APMoEApp.from_config("config.json")
 
 # Run inference
-prediction = app.predict({"visual": image_bytes})
+prediction = app.predict({"image": image_bytes})
 print(prediction.predicted_age)    # e.g. 34.2
 print(prediction.confidence)       # e.g. 0.87
 
 # Async variant (inside FastAPI / asyncio)
-prediction = await app.predict_async({"visual": image_bytes})
+prediction = await app.predict_async({"image": image_bytes})
 
 # Health check (weight files, expert liveness)
 report = app.validate()
 
 # Inspect what was loaded
 info = app.get_info()
-print(info["modalities"])  # ["visual"]
+print(info["modalities"])  # ["image"]
 print(info["experts"])     # ["face_expert"]
 ```
 
@@ -209,7 +225,7 @@ apmoe serve --config config.json
    receives only the modalities it declares and predicts independently.
 
 2. **Experts are not restricted to a single modality.** An expert may declare
-   `["visual"]`, `["audio"]`, or `["visual", "audio"]`. Multi-modal experts
+   `["image"]`, `["keystroke"]`, or `["image", "keystroke"]`. Multi-modal experts
    handle their own internal combination.
 
 3. **Embedding is optional per modality.** Omit `pipeline.embedder` in config

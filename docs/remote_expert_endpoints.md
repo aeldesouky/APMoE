@@ -825,7 +825,7 @@ The remote expert feature spans the following files:
 | `src/apmoe/experts/remote.py` | `RemoteExpert` class; `_apply_template` (predict-time placeholders); `_resolve_path` (dot-path response extraction); `_expand_str` / `_expand_headers` / `_expand_template` (bootstrap-time env-var expansion across endpoint, headers, and template literals) |
 | `src/apmoe/experts/registry.py` | `ExpertRegistry.from_configs` detects remote experts, passes constructor kwargs, lazy-imports `RemoteExpert` for auto-registration |
 | `src/apmoe/core/app.py` | `validate()` skips weight-file existence check for remote experts |
-| `pyproject.toml` | `httpx>=0.27` added to core dependencies; `[remote]` optional extras alias added |
+| `pyproject.toml` | `httpx>=0.27` included in default dependencies; `[remote]` remains a compatibility alias |
 | `src/apmoe/processing/llm/__init__.py` | **New** — `Base64ImageCleaner` and `PassthroughImageAnonymizer` for LLM image dispatch; isolated from the core builtin pipeline |
 | `src/apmoe/experts/providers/__init__.py` | **New** — `apmoe.experts.providers` package; documents the extension pattern for adding new providers |
 | `src/apmoe/experts/providers/lmstudio.py` | **New** — `LMStudioExpert`: built-in framework class for the LM Studio `/api/v1/chat` schema; registered as `apmoe.experts.providers.lmstudio.LMStudioExpert` |
