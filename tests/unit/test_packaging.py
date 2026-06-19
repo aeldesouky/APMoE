@@ -62,7 +62,7 @@ def test_expected_optional_extras_exist() -> None:
         "redis",
     ):
         assert extras[alias] == []
-    assert extras["models"] == ["apmoe-models==0.1.1"]
+    assert extras["models"] == [f"apmoe-models=={project['version']}"]
     assert "pytest>=8.0" in extras["dev"]
 
 

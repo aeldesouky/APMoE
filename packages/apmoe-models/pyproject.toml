@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "apmoe-models"
-version = "0.1.1"
+version = "0.1.2"
 description = "Demo model artifacts for APMoE built-in experts"
 readme = "README.md"
 license = { text = "MIT" }

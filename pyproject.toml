@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "apmoe"
-version = "0.1.1"
+version = "0.1.2"
 description = "APMoE: Age Prediction using Mixture of Experts - an inference-only, IoC-based Python framework"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -57,7 +57,7 @@ remote = []
 security = []
 redis = []
 models = [
-    "apmoe-models==0.1.1",
+    "apmoe-models==0.1.2",
 ]
 dev = [
     "build>=1.2",
