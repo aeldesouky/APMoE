@@ -705,8 +705,9 @@ def init(project_name: str, builtin: bool, download_models: bool | None) -> None
             click.echo(click.style("Could not acquire demo model artifacts:", fg="red"), err=True)
             click.echo(f"  {exc}", err=True)
             click.echo(
-                "Install `apmoe[models]`, set APMOE_MODEL_SOURCE_DIR, or rerun "
-                "`apmoe download-models --dest weights` with network access.",
+                "Install `apmoe[models]`, allow release artifact downloads, set "
+                "APMOE_MODEL_SOURCE_DIR, or rerun `apmoe download-models --dest "
+                "weights` with network access.",
                 err=True,
             )
             sys.exit(1)
@@ -801,8 +802,8 @@ def init(project_name: str, builtin: bool, download_models: bool | None) -> None
     default=True,
     show_default=True,
     help=(
-        "Install the version-matched apmoe-models package from PyPI when "
-        "model artifacts are not available locally."
+        "Try installing the version-matched apmoe-models package from PyPI "
+        "before falling back to release artifact URLs."
     ),
 )
 def download_models(

@@ -78,19 +78,19 @@ jobs:
 
       - name: Build distributions
         run: |
-          python -m build --outdir dist
-          python -m build packages/apmoe-models --outdir dist
+          python -m build --outdir dist/apmoe
+          python -m build packages/apmoe-models --outdir dist/apmoe-models
 
       - name: Check package metadata
-        run: python -m twine check dist/*
+        run: python -m twine check dist/apmoe/* dist/apmoe-models/*
 
       - name: Verify wheel import and CLI
         run: |
           python -m venv .venv-smoke
           . .venv-smoke/bin/activate
           python -m pip install --upgrade pip
-          python -m pip install dist/apmoe_models-*.whl
-          python -m pip install dist/apmoe-*.whl
+          python -m pip install dist/apmoe-models/apmoe_models-*.whl
+          python -m pip install dist/apmoe/apmoe-*.whl
           python -c "import apmoe; print(apmoe.__version__)"
           python -c "import apmoe_models; print(apmoe_models.__version__)"
           python -c "from apmoe.core.models import download_model_artifacts; download_model_artifacts('.smoke-weights', install_model_package=False)"
@@ -121,5 +121,12 @@ jobs:
           name: python-package-distributions
           path: dist/
 
-      - name: Publish distributions to PyPI
+      - name: Publish apmoe-models to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/apmoe-models
+
+      - name: Publish apmoe to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/apmoe

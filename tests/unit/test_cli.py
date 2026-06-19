@@ -499,6 +499,44 @@ class TestDownloadModelsCommand:
         install_mock.assert_called_once()
         assert (tmp_path / "weights" / "fake_model.bin").read_bytes() == payload
 
+    def test_download_models_falls_back_to_remote_url_when_package_install_fails(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Missing PyPI artifacts should not block release URL acquisition."""
+        source = tmp_path / "remote"
+        source.mkdir()
+        payload = b"model-bytes"
+        source_file = source / "fake_model.bin"
+        source_file.write_bytes(payload)
+        expected_sha = hashlib.sha256(payload).hexdigest()
+        artifact = models.ModelArtifact(
+            key="fake",
+            model="face",
+            filename="fake_model.bin",
+            sha256=expected_sha,
+            size_bytes=len(payload),
+            source_url=source_file.as_uri(),
+            license_note="test artifact",
+        )
+        monkeypatch.setattr(models, "MODEL_ARTIFACTS", (artifact,))
+        install_mock = MagicMock(
+            side_effect=ConfigurationError("missing model package")
+        )
+        monkeypatch.setattr(models, "_install_model_package_from_pypi", install_mock)
+        monkeypatch.setattr(models, "_resolve_artifact_source", lambda _artifact: None)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["download-models", "--dest", str(tmp_path / "weights"), "--model", "face"],
+        )
+
+        assert result.exit_code == 0, result.output
+        install_mock.assert_called_once()
+        assert (tmp_path / "weights" / "fake_model.bin").read_bytes() == payload
+
 
 # ---------------------------------------------------------------------------
 # apmoe serve

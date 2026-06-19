@@ -27,7 +27,9 @@ Create this trusted publisher for both PyPI projects: `apmoe` and
 The workflow runs when a GitHub release is published and can also be started
 manually from the Actions tab. It builds source distributions and wheels for
 both packages, runs `twine check`, smoke-installs the wheels, and publishes
-with OIDC. No PyPI API token secret is required.
+with OIDC. The workflow publishes `apmoe-models` first, then `apmoe`, so the
+framework package is not released if the model artifact package cannot be
+published. No PyPI API token secret is required.
 
 Before publishing a release:
 

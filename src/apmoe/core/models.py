@@ -23,6 +23,10 @@ from apmoe.core.exceptions import ConfigurationError
 ModelSelection = Literal["all", "face", "keystroke"]
 MODEL_PACKAGE_DISTRIBUTION = "apmoe-models"
 MODEL_PACKAGE_MODULE = "apmoe_models"
+MODEL_ARTIFACT_SOURCE_URL_TEMPLATE = (
+    "https://raw.githubusercontent.com/aeldesouky/APMoE/{ref}/"
+    "packages/apmoe-models/src/apmoe_models/weights/{filename}"
+)
 
 
 @dataclass(frozen=True)
@@ -45,7 +49,7 @@ MODEL_ARTIFACTS: tuple[ModelArtifact, ...] = (
         filename="face_age_expert.keras",
         sha256="c7e10f984023a85e4cf8e5e2a16d379766e036207667977d7cc81247e639442a",
         size_bytes=13_574_208,
-        source_url=None,
+        source_url=MODEL_ARTIFACT_SOURCE_URL_TEMPLATE,
         license_note=(
             "Derived demo face-age model. Confirm dataset/model redistribution "
             "rights before production use."
@@ -57,7 +61,7 @@ MODEL_ARTIFACTS: tuple[ModelArtifact, ...] = (
         filename="keystroke_age_expert.onnx",
         sha256="351a1998ffbe699c9bdd1efe97f56aa041e2d57ba3fbd388d51e65d315f8ea55",
         size_bytes=368_712,
-        source_url=None,
+        source_url=MODEL_ARTIFACT_SOURCE_URL_TEMPLATE,
         license_note=(
             "Derived demo keystroke model. Confirm dataset/model redistribution "
             "rights before production use."
@@ -69,7 +73,7 @@ MODEL_ARTIFACTS: tuple[ModelArtifact, ...] = (
         filename="keystroke_constants.json",
         sha256="a493412f4532c05728bc9b4efa50e2cfbf60e8d57475b4ed80d9cc0a9365e161",
         size_bytes=33_038,
-        source_url=None,
+        source_url=MODEL_ARTIFACT_SOURCE_URL_TEMPLATE,
         license_note=(
             "Operational constants for the demo keystroke model. Treat with the "
             "same provenance as the ONNX artifact."
@@ -99,8 +103,9 @@ def download_model_artifacts(
     PyPI users can install the ``apmoe-models`` artifact package through
     ``pip install "apmoe[models]"``. CLI callers may set
     ``install_model_package=True`` to install that package automatically when
-    no local source is available. Packaged ``apmoe`` wheels intentionally omit
-    model binaries.
+    no local source is available. If PyPI package acquisition is unavailable,
+    built-in artifacts can fall back to release-hosted source URLs. Packaged
+    ``apmoe`` wheels intentionally omit model binaries.
 
     Args:
         dest: Destination directory.
@@ -122,6 +127,8 @@ def download_model_artifacts(
     dest_path.mkdir(parents=True, exist_ok=True)
 
     written: list[Path] = []
+    install_attempted = False
+    install_error: ConfigurationError | None = None
     for artifact in selected_artifacts(model):
         target = dest_path / artifact.filename
         if target.exists() and skip_existing and not force:
@@ -133,20 +140,39 @@ def download_model_artifacts(
             )
 
         source = _resolve_artifact_source(artifact)
-        if source is None and install_model_package:
-            _install_model_package_from_pypi()
+        if source is None and install_model_package and not install_attempted:
+            install_attempted = True
+            try:
+                _install_model_package_from_pypi()
+            except ConfigurationError as exc:
+                install_error = exc
+        if source is None and install_model_package and install_error is None:
             source = _resolve_artifact_source(artifact)
+        if source is None:
+            source = _resolve_remote_artifact_source(artifact)
         if source is None:
             raise ConfigurationError(
                 "No source is configured for model artifact "
                 f"'{artifact.filename}'. Wheels do not bundle demo model files; "
-                f"install them with `pip install \"apmoe[models]\"`, set "
+                f"install them with `pip install \"apmoe[models]\"`, allow "
+                "release artifact downloads, set "
                 "APMOE_MODEL_SOURCE_DIR to a directory containing the files, "
                 f"or set APMOE_MODEL_SOURCE_{artifact.key.upper()} to a file path or URL.",
                 context={"artifact": artifact.key, "filename": artifact.filename},
             )
 
-        _copy_or_download(source, target)
+        try:
+            _copy_or_download(source, target)
+        except ConfigurationError as exc:
+            if install_error is not None:
+                raise ConfigurationError(
+                    f"{exc} The PyPI model package install also failed.",
+                    context={
+                        **exc.context,
+                        "model_package_install_error": str(install_error),
+                    },
+                ) from exc
+            raise
         _verify_sha256(target, artifact.sha256)
         written.append(target)
 
@@ -175,7 +201,17 @@ def _resolve_artifact_source(
     if model_package_source is not None:
         return model_package_source
 
-    return artifact.source_url
+    return None
+
+
+def _resolve_remote_artifact_source(artifact: ModelArtifact) -> str | None:
+    """Return the default remote source URL for *artifact*, if configured."""
+    if artifact.source_url is None:
+        return None
+
+    ref = os.environ.get("APMOE_MODEL_SOURCE_REF") or f"v{_apmoe_version()}"
+    filename = urllib.parse.quote(artifact.filename)
+    return artifact.source_url.format(ref=ref, version=_apmoe_version(), filename=filename)
 
 
 def _resolve_model_package_artifact(
@@ -232,11 +268,16 @@ def _copy_or_download(
 
 def model_package_requirement() -> str:
     """Return the PyPI requirement used to install packaged model artifacts."""
+    return f"{MODEL_PACKAGE_DISTRIBUTION}=={_apmoe_version()}"
+
+
+def _apmoe_version() -> str:
+    """Return the installed or source-tree APMoE version."""
     try:
-        version = importlib.metadata.version("apmoe")
+        return importlib.metadata.version("apmoe")
     except importlib.metadata.PackageNotFoundError:
         from apmoe import __version__ as version
-    return f"{MODEL_PACKAGE_DISTRIBUTION}=={version}"
+    return version
 
 
 def _install_model_package_from_pypi() -> None:

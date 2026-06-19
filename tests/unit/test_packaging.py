@@ -150,3 +150,4 @@ def test_pypi_trusted_publishing_workflow_exists() -> None:
     assert "group: pypi-publish" in text
     assert "github.event.release.tag_name" in text
     assert "Version mismatch:" in text
+    assert text.index("Publish apmoe-models to PyPI") < text.index("Publish apmoe to PyPI")

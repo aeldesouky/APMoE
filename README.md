@@ -100,8 +100,9 @@ apmoe download-models --dest weights
 ```
 
 The command uses local configured sources first. If no local source is found,
-it installs the version-matched `apmoe-models` package from PyPI and copies the
-artifacts from that package. You can also install models up front:
+it tries the version-matched `apmoe-models` package from PyPI. If that package
+is unavailable, it falls back to release-hosted artifact URLs and verifies the
+downloaded files. You can also install models up front:
 
 ```bash
 pip install "apmoe[models]"

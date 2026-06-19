@@ -77,8 +77,10 @@ apmoe download-models --dest weights --model all
 ```
 
 `apmoe download-models` uses local configured sources first. If no local source
-is available, it installs the version-matched `apmoe-models` package from PyPI
-and copies artifacts from that package.
+is available, it tries the version-matched `apmoe-models` package from PyPI and
+copies artifacts from that package. If the model package is unavailable, it
+falls back to release-hosted artifact URLs and still verifies SHA-256 checksums
+after download.
 
 You can also install the model package up front:
 
@@ -100,6 +102,9 @@ On PowerShell:
 $env:APMOE_MODEL_SOURCE_DIR = "D:\models\apmoe"
 apmoe download-models --dest weights
 ```
+
+To download artifacts from a different Git ref, set `APMOE_MODEL_SOURCE_REF`
+before running the command.
 
 ---
 
