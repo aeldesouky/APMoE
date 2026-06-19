@@ -67,8 +67,8 @@ MODEL_ARTIFACTS: tuple[ModelArtifact, ...] = (
         key="keystroke_constants",
         model="keystroke",
         filename="keystroke_constants.json",
-        sha256="2aef91e5ee8c597740af3327dcbda2c797194a5b0688642b289646822124fe33",
-        size_bytes=34_479,
+        sha256="a493412f4532c05728bc9b4efa50e2cfbf60e8d57475b4ed80d9cc0a9365e161",
+        size_bytes=33_038,
         source_url=None,
         license_note=(
             "Operational constants for the demo keystroke model. Treat with the "

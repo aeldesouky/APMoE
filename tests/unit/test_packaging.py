@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import tomllib
 from pathlib import Path
+
+from apmoe.core.models import MODEL_ARTIFACTS
 
 
 def _pyproject() -> dict[str, object]:
@@ -124,6 +127,16 @@ def test_model_artifact_package_contains_expected_files() -> None:
     assert (weights_dir / "face_age_expert.keras").is_file()
     assert (weights_dir / "keystroke_age_expert.onnx").is_file()
     assert (weights_dir / "keystroke_constants.json").is_file()
+
+
+def test_model_artifact_manifest_matches_packaged_files() -> None:
+    """Packaged model bytes should match the acquisition manifest."""
+    weights_dir = Path("packages/apmoe-models/src/apmoe_models/weights")
+
+    for artifact in MODEL_ARTIFACTS:
+        path = weights_dir / artifact.filename
+        assert path.stat().st_size == artifact.size_bytes
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == artifact.sha256
 
 
 def test_pypi_trusted_publishing_workflow_exists() -> None:
