@@ -44,7 +44,8 @@ Optional extras:
 
 | Extra | Adds |
 |---|---|
-| `serve`, `image`, `onnx`, `tensorflow`, `torch`, `remote`, `security`, `redis`, `models` | Backward-compatible aliases; these runtime dependencies are already included by default |
+| `models` | Installs the separate `apmoe-models` artifact package used by `apmoe download-models` |
+| `serve`, `image`, `onnx`, `tensorflow`, `torch`, `remote`, `security`, `redis` | Backward-compatible aliases; these runtime dependencies are already included by default |
 | `dev` | Test, lint, type-check, build, and publishing tools |
 
 ### From Source
@@ -98,10 +99,18 @@ To populate demo model artifacts for the built-in experts:
 apmoe download-models --dest weights
 ```
 
+The command uses local configured sources first. If no local source is found,
+it installs the version-matched `apmoe-models` package from PyPI and copies the
+artifacts from that package. You can also install models up front:
+
+```bash
+pip install "apmoe[models]"
+```
+
 When running from a source checkout, `apmoe init my_app --builtin` uses the same
-model acquisition path and can copy local demo artifacts into the scaffold. PyPI
-wheels do not bundle model files; set `APMOE_MODEL_SOURCE_DIR` or provide your
-own weights.
+model acquisition path and can copy local demo artifacts into the scaffold. The
+main `apmoe` wheel does not bundle model files; use `apmoe[models]`, set
+`APMOE_MODEL_SOURCE_DIR`, or provide your own weights.
 
 The scaffold is local-only by default. When you run `apmoe validate`,
 `apmoe serve`, or `apmoe predict`, the CLI prints an expert summary showing

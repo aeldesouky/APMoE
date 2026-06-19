@@ -60,9 +60,9 @@ def test_expected_optional_extras_exist() -> None:
         "remote",
         "security",
         "redis",
-        "models",
     ):
         assert extras[alias] == []
+    assert extras["models"] == ["apmoe-models==0.1.1"]
     assert "pytest>=8.0" in extras["dev"]
 
 
@@ -104,6 +104,26 @@ def test_package_versions_are_in_sync() -> None:
 
     assert match is not None
     assert project["version"] == match.group(1)  # type: ignore[index]
+    model_project = tomllib.loads(
+        Path("packages/apmoe-models/pyproject.toml").read_text(encoding="utf-8")
+    )["project"]
+    model_init_text = Path("packages/apmoe-models/src/apmoe_models/__init__.py").read_text(
+        encoding="utf-8"
+    )
+    model_match = re.search(r'^__version__ = "([^"]+)"$', model_init_text, re.MULTILINE)
+
+    assert model_match is not None
+    assert model_project["version"] == project["version"]  # type: ignore[index]
+    assert model_match.group(1) == project["version"]  # type: ignore[index]
+
+
+def test_model_artifact_package_contains_expected_files() -> None:
+    """The optional PyPI model package should contain the demo artifacts."""
+    weights_dir = Path("packages/apmoe-models/src/apmoe_models/weights")
+
+    assert (weights_dir / "face_age_expert.keras").is_file()
+    assert (weights_dir / "keystroke_age_expert.onnx").is_file()
+    assert (weights_dir / "keystroke_constants.json").is_file()
 
 
 def test_pypi_trusted_publishing_workflow_exists() -> None:

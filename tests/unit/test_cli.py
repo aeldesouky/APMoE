@@ -24,6 +24,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
+import apmoe
 import apmoe.core.models as models
 from apmoe.cli.main import _should_download_demo_models, cli
 from apmoe.core.config import load_config
@@ -315,6 +316,7 @@ class TestInitCommand:
 
         assert result.exit_code == 0, result.output
         mock_download.assert_called_once()
+        assert mock_download.call_args.kwargs["install_model_package"] is True
         assert "fake_model.bin" in result.output
 
     @patch("click.confirm")
@@ -449,11 +451,53 @@ class TestDownloadModelsCommand:
         runner = CliRunner()
         result = runner.invoke(
             cli,
-            ["download-models", "--dest", str(tmp_path / "weights"), "--model", "face"],
+            [
+                "download-models",
+                "--dest",
+                str(tmp_path / "weights"),
+                "--model",
+                "face",
+                "--no-install-package",
+            ],
         )
 
         assert result.exit_code != 0
         assert "No source is configured" in result.output
+
+    def test_download_models_installs_model_package_when_source_missing(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        source = tmp_path / "source"
+        source.mkdir()
+        payload = b"model-bytes"
+        source_file = source / "fake_model.bin"
+        source_file.write_bytes(payload)
+        expected_sha = hashlib.sha256(payload).hexdigest()
+        self._install_fake_catalog(monkeypatch, expected_sha=expected_sha)
+        install_mock = MagicMock()
+        monkeypatch.setattr(models, "_install_model_package_from_pypi", install_mock)
+
+        calls = {"count": 0}
+
+        def fake_resolve(_artifact: models.ModelArtifact) -> Path | None:
+            calls["count"] += 1
+            if calls["count"] == 1:
+                return None
+            return source_file
+
+        monkeypatch.setattr(models, "_resolve_artifact_source", fake_resolve)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["download-models", "--dest", str(tmp_path / "weights"), "--model", "face"],
+        )
+
+        assert result.exit_code == 0, result.output
+        install_mock.assert_called_once()
+        assert (tmp_path / "weights" / "fake_model.bin").read_bytes() == payload
 
 
 # ---------------------------------------------------------------------------
@@ -1002,7 +1046,7 @@ class TestCLIGroup:
         runner = CliRunner()
         result = runner.invoke(cli, ["--version"])
         assert result.exit_code == 0
-        assert "0.1.0" in result.output
+        assert apmoe.__version__ in result.output
 
     def test_no_args_shows_usage(self) -> None:
         """Invoking the CLI with no arguments shows the usage / help text."""

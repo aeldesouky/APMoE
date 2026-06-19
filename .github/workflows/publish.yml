@@ -41,10 +41,24 @@ jobs:
           if init_match is None:
               raise SystemExit("src/apmoe/__init__.py does not define __version__")
           init_version = init_match.group(1)
+          model_pyproject_version = tomllib.loads(
+              Path("packages/apmoe-models/pyproject.toml").read_text()
+          )["project"]["version"]
+          model_init_text = Path("packages/apmoe-models/src/apmoe_models/__init__.py").read_text()
+          model_init_match = re.search(r'^__version__ = "([^"]+)"$', model_init_text, re.MULTILINE)
+          if model_init_match is None:
+              raise SystemExit("apmoe_models does not define __version__")
+          model_init_version = model_init_match.group(1)
           if pyproject_version != init_version:
               raise SystemExit(
                   f"Version mismatch: pyproject.toml={pyproject_version}, "
                   f"src/apmoe/__init__.py={init_version}"
+              )
+          if pyproject_version != model_pyproject_version or pyproject_version != model_init_version:
+              raise SystemExit(
+                  f"Version mismatch: apmoe={pyproject_version}, "
+                  f"apmoe-models pyproject={model_pyproject_version}, "
+                  f"apmoe_models.__version__={model_init_version}"
               )
           print(pyproject_version)
           PY
@@ -63,7 +77,9 @@ jobs:
         run: python -m pip install --upgrade build twine
 
       - name: Build distributions
-        run: python -m build
+        run: |
+          python -m build --outdir dist
+          python -m build packages/apmoe-models --outdir dist
 
       - name: Check package metadata
         run: python -m twine check dist/*
@@ -73,8 +89,11 @@ jobs:
           python -m venv .venv-smoke
           . .venv-smoke/bin/activate
           python -m pip install --upgrade pip
-          python -m pip install dist/*.whl
+          python -m pip install dist/apmoe_models-*.whl
+          python -m pip install dist/apmoe-*.whl
           python -c "import apmoe; print(apmoe.__version__)"
+          python -c "import apmoe_models; print(apmoe_models.__version__)"
+          python -c "from apmoe.core.models import download_model_artifacts; download_model_artifacts('.smoke-weights', install_model_package=False)"
           apmoe --help
 
       - name: Upload distributions

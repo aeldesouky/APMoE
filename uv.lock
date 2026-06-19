@@ -79,9 +79,13 @@ dev = [
     { name = "ruff" },
     { name = "twine" },
 ]
+models = [
+    { name = "apmoe-models" },
+]
 
 [package.metadata]
 requires-dist = [
+    { name = "apmoe-models", marker = "extra == 'models'", directory = "packages/apmoe-models" },
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.2" },
     { name = "click", specifier = ">=8.1" },
     { name = "cryptography", specifier = ">=42.0" },
@@ -107,6 +111,11 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.29" },
 ]
 provides-extras = ["serve", "image", "onnx", "tensorflow", "torch", "remote", "security", "redis", "models", "dev"]
+
+[[package]]
+name = "apmoe-models"
+version = "0.1.1"
+source = { directory = "packages/apmoe-models" }
 
 [[package]]
 name = "ast-serialize"

@@ -3,18 +3,26 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
+import importlib.metadata
+import importlib.resources
 import os
 import shutil
+import subprocess
+import sys
 import urllib.parse
 import urllib.request
 from contextlib import suppress
 from dataclasses import dataclass
+from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import Literal
 
 from apmoe.core.exceptions import ConfigurationError
 
 ModelSelection = Literal["all", "face", "keystroke"]
+MODEL_PACKAGE_DISTRIBUTION = "apmoe-models"
+MODEL_PACKAGE_MODULE = "apmoe_models"
 
 
 @dataclass(frozen=True)
@@ -83,12 +91,16 @@ def download_model_artifacts(
     model: ModelSelection = "all",
     force: bool = False,
     skip_existing: bool = True,
+    install_model_package: bool = False,
 ) -> list[Path]:
     """Copy or download selected model artifacts into *dest*.
 
     Local source checkouts can provide model files from ``src/apmoe/weights``.
-    Packaged wheels intentionally omit those files; in that case, configure
-    ``APMOE_MODEL_SOURCE_DIR`` or per-artifact ``APMOE_MODEL_SOURCE_<KEY>``.
+    PyPI users can install the ``apmoe-models`` artifact package through
+    ``pip install "apmoe[models]"``. CLI callers may set
+    ``install_model_package=True`` to install that package automatically when
+    no local source is available. Packaged ``apmoe`` wheels intentionally omit
+    model binaries.
 
     Args:
         dest: Destination directory.
@@ -96,6 +108,8 @@ def download_model_artifacts(
         force: Overwrite destination files when they already exist.
         skip_existing: Leave existing destination files untouched unless
             ``force`` is true.
+        install_model_package: Install ``apmoe[models]`` from PyPI when the
+            selected artifact source is unavailable locally.
 
     Returns:
         Paths that were copied or downloaded.
@@ -119,12 +133,16 @@ def download_model_artifacts(
             )
 
         source = _resolve_artifact_source(artifact)
+        if source is None and install_model_package:
+            _install_model_package_from_pypi()
+            source = _resolve_artifact_source(artifact)
         if source is None:
             raise ConfigurationError(
                 "No source is configured for model artifact "
                 f"'{artifact.filename}'. Wheels do not bundle demo model files; "
-                "set APMOE_MODEL_SOURCE_DIR to a directory containing the files "
-                f"or APMOE_MODEL_SOURCE_{artifact.key.upper()} to a file path or URL.",
+                f"install them with `pip install \"apmoe[models]\"`, set "
+                "APMOE_MODEL_SOURCE_DIR to a directory containing the files, "
+                f"or set APMOE_MODEL_SOURCE_{artifact.key.upper()} to a file path or URL.",
                 context={"artifact": artifact.key, "filename": artifact.filename},
             )
 
@@ -135,7 +153,9 @@ def download_model_artifacts(
     return written
 
 
-def _resolve_artifact_source(artifact: ModelArtifact) -> str | Path | None:
+def _resolve_artifact_source(
+    artifact: ModelArtifact,
+) -> str | Path | Traversable | None:
     """Find an available source for *artifact*."""
     per_artifact = os.environ.get(f"APMOE_MODEL_SOURCE_{artifact.key.upper()}")
     if per_artifact:
@@ -151,13 +171,40 @@ def _resolve_artifact_source(artifact: ModelArtifact) -> str | Path | None:
     if package_candidate.exists():
         return package_candidate
 
+    model_package_source = _resolve_model_package_artifact(artifact)
+    if model_package_source is not None:
+        return model_package_source
+
     return artifact.source_url
 
 
-def _copy_or_download(source: str | Path, target: Path) -> None:
+def _resolve_model_package_artifact(
+    artifact: ModelArtifact,
+) -> Traversable | None:
+    """Return an artifact resource from ``apmoe-models`` if installed."""
+    try:
+        candidate = importlib.resources.files(MODEL_PACKAGE_MODULE).joinpath(
+            "weights",
+            artifact.filename,
+        )
+    except ModuleNotFoundError:
+        return None
+    if candidate.is_file():
+        return candidate
+    return None
+
+
+def _copy_or_download(
+    source: str | Path | Traversable,
+    target: Path,
+) -> None:
     """Copy a local artifact or download a URL to *target*."""
     if isinstance(source, Path):
         shutil.copy2(source, target)
+        return
+    if isinstance(source, Traversable):
+        with source.open("rb") as src, target.open("wb") as dst:
+            shutil.copyfileobj(src, dst)
         return
 
     parsed = urllib.parse.urlparse(source)
@@ -181,6 +228,48 @@ def _copy_or_download(source: str | Path, target: Path) -> None:
         f"Model artifact source does not exist and is not a supported URL: {source}",
         context={"source": source, "target": str(target)},
     )
+
+
+def model_package_requirement() -> str:
+    """Return the PyPI requirement used to install packaged model artifacts."""
+    try:
+        version = importlib.metadata.version("apmoe")
+    except importlib.metadata.PackageNotFoundError:
+        from apmoe import __version__ as version
+    return f"{MODEL_PACKAGE_DISTRIBUTION}=={version}"
+
+
+def _install_model_package_from_pypi() -> None:
+    """Install the version-matched ``apmoe-models`` package from PyPI."""
+    if _model_package_is_available():
+        return
+
+    requirement = model_package_requirement()
+    cmd = [sys.executable, "-m", "pip", "install", requirement]
+    result = subprocess.run(
+        cmd,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    importlib.invalidate_caches()
+    if result.returncode == 0 and _model_package_is_available():
+        return
+
+    details = (result.stderr or result.stdout).strip()
+    raise ConfigurationError(
+        f"Could not install model artifact package from PyPI: {requirement}.",
+        context={"requirement": requirement, "pip_output": details},
+    )
+
+
+def _model_package_is_available() -> bool:
+    """Return whether the model artifact package can be imported."""
+    try:
+        importlib.resources.files(MODEL_PACKAGE_MODULE)
+    except ModuleNotFoundError:
+        return False
+    return True
 
 
 def _verify_sha256(path: Path, expected: str) -> None:

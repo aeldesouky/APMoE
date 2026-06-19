@@ -28,10 +28,12 @@ Install commands:
 | Goal | Install command |
 |---|---|
 | Runtime use, including serving, remote experts, security, Redis, and ML backends | `pip install apmoe` |
+| Runtime plus packaged demo model artifacts | `pip install "apmoe[models]"` |
 | Contributor environment | `pip install -e ".[dev]"` |
 
 The old runtime extra names such as `apmoe[security]` and `apmoe[redis]` remain
-as compatibility aliases, but users no longer need them.
+as compatibility aliases, but users no longer need them. The `models` extra is
+different: it installs the separate `apmoe-models` artifact package.
 
 ---
 
@@ -74,8 +76,18 @@ If you skip models during init, acquire them later:
 apmoe download-models --dest weights --model all
 ```
 
-PyPI wheels do not include model binaries. To copy model artifacts from a local
-source directory, set:
+`apmoe download-models` uses local configured sources first. If no local source
+is available, it installs the version-matched `apmoe-models` package from PyPI
+and copies artifacts from that package.
+
+You can also install the model package up front:
+
+```bash
+pip install "apmoe[models]"
+```
+
+The main `apmoe` wheel does not include model binaries. To copy model artifacts
+from a local source directory instead of PyPI, set:
 
 ```bash
 export APMOE_MODEL_SOURCE_DIR=/path/to/apmoe-models
@@ -250,8 +262,8 @@ Pin a local artifact hash when model files are managed outside the package:
 
 The default package includes the backends used by built-in experts. ONNX,
 TensorFlow/Keras, PyTorch, Pillow, remote HTTP, security, and Redis client
-dependencies are installed by `pip install apmoe`. You still need to provide or
-download the actual model artifact files.
+dependencies are installed by `pip install apmoe`. Install `apmoe[models]` or
+run `apmoe download-models` to acquire packaged demo model artifacts.
 
 ---
 

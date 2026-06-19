@@ -93,13 +93,14 @@ actually shipped with that application.
 
 The default `pip install apmoe` runtime includes the framework, serving,
 remote, security, Redis client, image, ONNX, TensorFlow, and Torch
-dependencies. Runtime extra names remain as compatibility aliases but do not
-add additional dependencies.
+dependencies. Runtime extra names remain as compatibility aliases. The
+`models` extra installs the separate `apmoe-models` artifact package.
 
 | Install path | Runtime dependencies likely present | Notice impact |
 |---|---|---|
 | `apmoe` | Click, Pydantic, NumPy, FastAPI, Uvicorn, python-multipart, Pillow, ONNX Runtime, TensorFlow/Keras, Torch, HTTPX, PyJWT, cryptography, redis client | Include notices for all runtime dependencies; comply with crypto-library export/security review policies where applicable. |
 | Runtime alias extras such as `apmoe[serve]`, `apmoe[security]`, or `apmoe[redis]` | Same as `apmoe`; dependencies are already included by default | Same notice set as `apmoe`. |
+| `apmoe[models]` / `apmoe-models` | Packaged demo model artifacts | Include model provenance and redistribution notices; confirm production rights before redistributing. |
 | `apmoe[dev]` | pytest, ruff, mypy, pre-commit | Usually development-only; not included in production redistribution unless packaged into the image. |
 
 ## Recommended Distribution Checklist

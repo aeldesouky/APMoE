@@ -88,6 +88,7 @@ junit.xml
 # Un-ignore the canonical model directories so git tracks the shipped defaults.
 !weights/*.onnx
 !src/apmoe/weights/*.onnx
+!packages/apmoe-models/src/apmoe_models/weights/*.onnx
 
 # Experiment tracking
 runs/

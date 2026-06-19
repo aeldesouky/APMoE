@@ -1,0 +1,34 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "apmoe-models"
+version = "0.1.1"
+description = "Demo model artifacts for APMoE built-in experts"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11, <3.13"
+authors = [{ name = "APMoE Contributors" }]
+keywords = ["age-prediction", "model-artifacts", "apmoe"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/aeldesouky/APMoE"
+Repository = "https://github.com/aeldesouky/APMoE"
+Issues = "https://github.com/aeldesouky/APMoE/issues"
+
+[tool.hatch.build]
+artifacts = ["src/apmoe_models/weights/*.onnx"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/apmoe_models"]

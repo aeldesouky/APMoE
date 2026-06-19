@@ -698,14 +698,15 @@ def init(project_name: str, builtin: bool, download_models: bool | None) -> None
                     model="all",
                     force=False,
                     skip_existing=True,
+                    install_model_package=True,
                 )
             ]
         except ConfigurationError as exc:
             click.echo(click.style("Could not acquire demo model artifacts:", fg="red"), err=True)
             click.echo(f"  {exc}", err=True)
             click.echo(
-                "Set APMOE_MODEL_SOURCE_DIR or run `apmoe download-models --dest weights` "
-                "after configuring a model source.",
+                "Install `apmoe[models]`, set APMOE_MODEL_SOURCE_DIR, or rerun "
+                "`apmoe download-models --dest weights` with network access.",
                 err=True,
             )
             sys.exit(1)
@@ -795,11 +796,21 @@ def init(project_name: str, builtin: bool, download_models: bool | None) -> None
     show_default=True,
     help="Skip files that already exist unless --force is set.",
 )
+@click.option(
+    "--install-package/--no-install-package",
+    default=True,
+    show_default=True,
+    help=(
+        "Install the version-matched apmoe-models package from PyPI when "
+        "model artifacts are not available locally."
+    ),
+)
 def download_models(
     dest: str,
     model_name: str,
     force: bool,
     skip_existing: bool,
+    install_package: bool,
 ) -> None:
     """Download or copy demo model artifacts for built-in experts."""
     from apmoe.core.exceptions import ConfigurationError
@@ -811,6 +822,7 @@ def download_models(
             model=model_name,  # type: ignore[arg-type]
             force=force,
             skip_existing=skip_existing,
+            install_model_package=install_package,
         )
     except ConfigurationError as exc:
         click.echo(click.style("Model acquisition failed:", fg="red"), err=True)
