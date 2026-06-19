@@ -211,9 +211,10 @@ print(info["experts"])     # ["face_expert"]
 
 ```bash
 apmoe serve --config config.json
-# → http://localhost:8000/predict
-# → http://localhost:8000/health
-# → http://localhost:8000/info
+# -> http://localhost:8000/v1/predict
+# -> http://localhost:8000/v1/health
+# -> http://localhost:8000/v1/info
+# -> http://localhost:8000/docs
 ```
 
 ---

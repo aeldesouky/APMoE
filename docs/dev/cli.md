@@ -113,10 +113,12 @@ Before starting uvicorn, `serve` prints an expert summary with `[local]`,
 redaction, and fallback warnings.
 
 Endpoints exposed by the server:
-- `POST /predict`
-- `GET /health`
-- `GET /info`
+- `POST /v1/predict` (`POST /predict` legacy alias)
+- `GET /v1/health` (`GET /health` legacy alias)
+- `GET /v1/info` (`GET /info` legacy alias)
 - `GET /docs`
+- `GET /redoc`
+- `GET /openapi.json`
 
 ---
 

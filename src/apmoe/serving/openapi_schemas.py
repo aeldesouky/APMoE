@@ -16,33 +16,47 @@ from pydantic import BaseModel, ConfigDict, Field
 # ---------------------------------------------------------------------------
 
 OPENAPI_DESCRIPTION = """\
-## Multimodal age prediction (MVP)
+## APMoE HTTP API
 
-Versioned endpoints live under **`/v1`** (for example, **`POST /v1/predict`**). The legacy unversioned paths (``/predict``, ``/health``, ``/info``) remain temporarily and return **`Deprecation`** and **`Sunset`** headers to signal the migration window.
+The current API is versioned under **`/v1`**:
 
-Send **`POST /v1/predict`** with **`Content-Type: application/json`**. The body must be a **JSON object** (not an array). Each **key** is a modality name from your `config.json`; each **value** is any JSON value your modality processor accepts (arrays, strings, nested objects, etc.). Missing modalities are skipped; experts that need them appear under `skipped_experts` in the response.
+- **`POST /v1/predict`** runs multimodal inference.
+- **`GET /v1/health`** reports readiness from loaded experts.
+- **`GET /v1/info`** returns runtime metadata and redacted configuration.
 
-### Defaults in generated projects
+Legacy unversioned paths (**`/predict`**, **`/health`**, **`/info`**) are still
+mounted for compatibility. They return **`X-API-Version: 1`** plus
+**`Deprecation`** and **`Sunset`** headers. New clients should use `/v1/*`.
 
-Typical modality keys are **`image`** and **`keystroke`**. Values are normalised to bytes before the pipeline (JSON values are serialised; strings are UTF-8 encoded).
+### Prediction requests
+
+Send **`POST /v1/predict`** with **`Content-Type: application/json`**. The body
+must be a JSON object, not an array. Each key is a modality name from
+`config.json`; each value is any JSON value accepted by that modality processor
+(string, list, object, number, and so on). Strings are UTF-8 encoded before
+pipeline execution; other JSON values are serialized to UTF-8 JSON bytes.
+
+Missing modalities are allowed. Experts that require missing modalities are
+listed in `skipped_experts`.
 
 ### Interactive docs
 
 | URL | Purpose |
 |-----|---------|
-| **`/docs`** | Swagger UI — try requests |
+| **`/docs`** | Swagger UI |
 | **`/redoc`** | ReDoc |
-| **`/openapi.json`** | OpenAPI 3 schema |
+| **`/openapi.json`** | OpenAPI schema |
 
-### Errors (summary)
+### Common errors
 
 | Code | When |
 |------|------|
-| **422** | Body is not JSON, or root is not a JSON object |
-| **503** | No expert could run (e.g. pipeline empty), or health degraded |
+| **401** | Stateless authentication is enabled and credentials are missing or invalid |
+| **403** | Authorization is enabled and the token lacks the required scope |
+| **422** | Request body is malformed JSON or not a JSON object |
+| **429** | Request rate limit exceeded |
+| **503** | No expert could run, or `/health` is degraded |
 | **500** | Other framework errors |
-
-Rate limiting and authentication are optional deployment concerns; see configuration.
 """
 
 OPENAPI_TAGS: list[dict[str, str]] = [
@@ -58,13 +72,16 @@ OPENAPI_TAGS: list[dict[str, str]] = [
 
 
 # ---------------------------------------------------------------------------
-# POST /predict — body examples (Swagger "Examples" dropdown)
+# POST /v1/predict body examples (Swagger "Examples" dropdown)
 # ---------------------------------------------------------------------------
 
 _PREDICT_EXAMPLES: dict[str, dict[str, Any]] = {
     "keystroke_triples": {
         "summary": "Keystroke triples",
-        "description": "IKDD-style rows `[key1, key2, dwell_ms]`. Use the modality name from your config (often `keystroke`).",
+        "description": (
+            "IKDD-style rows `[key1, key2, dwell_ms]`. Use the modality name "
+            "from your config, often `keystroke`."
+        ),
         "value": {
             "keystroke": [
                 [8, 0, 95.0],
@@ -83,7 +100,10 @@ _PREDICT_EXAMPLES: dict[str, dict[str, Any]] = {
     },
     "keystroke_feature_dict": {
         "summary": "Keystroke pre-computed features",
-        "description": "Dict of feature name → list of values, as accepted by the built-in keystroke processor.",
+        "description": (
+            "Dict of feature name to list of values, as accepted by the built-in "
+            "keystroke processor."
+        ),
         "value": {
             "keystroke": {
                 "dur_8": [95.0, 102.0],
@@ -94,12 +114,12 @@ _PREDICT_EXAMPLES: dict[str, dict[str, Any]] = {
     "image_and_keystroke": {
         "summary": "Image + keystroke (two modalities)",
         "description": (
-            "Use modality names from your config (often `image` and `keystroke`). "
-            "The image value must be a string your ImageProcessor accepts (e.g. base64 image data or a file path); "
-            "paste a real JPEG/PNG payload when executing from Swagger."
+            "Use modality names from your config, often `image` and `keystroke`. "
+            "The image value must be a string your ImageProcessor accepts, such "
+            "as base64 image data or a file path."
         ),
         "value": {
-            "image": "<base64 or file path — see ImageProcessor>",
+            "image": "<base64 or file path; see ImageProcessor>",
             "keystroke": [[8, 0, 95.0], [13, 0, 100.0]],
         },
     },
@@ -114,7 +134,8 @@ PredictRequestBody = Annotated[
         title="Multimodal request",
         description=(
             "JSON object mapping each configured modality name to its payload. "
-            "Only keys you send are processed; omitting a modality skips experts that depend on it."
+            "Only keys you send are processed; omitting a modality skips experts "
+            "that depend on it."
         ),
         openapi_examples=_PREDICT_EXAMPLES,
     ),
@@ -122,7 +143,7 @@ PredictRequestBody = Annotated[
 
 
 # ---------------------------------------------------------------------------
-# POST /predict — response model
+# POST /v1/predict response model
 # ---------------------------------------------------------------------------
 
 
@@ -141,7 +162,7 @@ class ExpertOutputItem(BaseModel):
 
 
 class PredictionResponse(BaseModel):
-    """Aggregated prediction returned by ``POST /predict`` on success (HTTP 200)."""
+    """Aggregated prediction returned by ``POST /v1/predict`` on success."""
 
     model_config = ConfigDict(
         extra="ignore",
@@ -169,11 +190,11 @@ class PredictionResponse(BaseModel):
                     "failed_modalities": {},
                     "confidence_threshold": 0.85,
                     "recommendations": [
-                        "Expert 'keystroke_age_expert': keystroke session coverage is 45%"
-                        " — collect at least 50 keystrokes for reliable age inference.",
-                        "Aggregated confidence is 82%, below the configured threshold of"
-                        " 85%. Suggestions: (1) supply additional modalities if available;"
-                        " (2) extend the keystroke session length.",
+                        "Expert 'keystroke_age_expert': keystroke session coverage is "
+                        "45%; collect at least 50 keystrokes for reliable age inference.",
+                        "Aggregated confidence is 82%, below the configured threshold of "
+                        "85%. Suggestions: (1) supply additional modalities if available; "
+                        "(2) extend the keystroke session length.",
                     ],
                 },
             }
@@ -202,18 +223,18 @@ class PredictionResponse(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    """`GET /health` JSON body (200 or 503)."""
+    """`GET /v1/health` JSON body (200 or 503)."""
 
     model_config = ConfigDict(extra="allow")
 
     status: str = Field(description='Overall status: "healthy" or "degraded".')
     experts: dict[str, bool] = Field(
-        description="Expert name → whether weights loaded successfully.",
+        description="Expert name to whether weights loaded successfully.",
     )
 
 
 class InfoResponse(BaseModel):
-    """Loose schema for `GET /info` (shape mirrors `APMoEApp.get_info()`)."""
+    """Loose schema for `GET /v1/info` (shape mirrors `APMoEApp.get_info()`)."""
 
     model_config = ConfigDict(extra="allow")
 
@@ -226,6 +247,6 @@ class InfoResponse(BaseModel):
         default=None,
         description=(
             "Confidence gate in [0.0, 1.0] below which the pipeline populates "
-            "Prediction.metadata['recommendations'].  null when disabled."
+            "Prediction.metadata['recommendations']. null when disabled."
         ),
     )

@@ -1,145 +1,291 @@
 # Serving Layer (`apmoe.serving`)
 
-The serving layer adapts a bootstrapped `APMoEApp` to a FastAPI application.
-It provides HTTP endpoints plus middleware for logging, CORS, rate limiting,
-and optional authentication.
+The serving layer adapts a bootstrapped `APMoEApp` to a FastAPI application. It
+exposes the versioned HTTP API, OpenAPI docs, request logging, CORS, rate
+limiting, optional stateless authentication/authorization, and the legacy
+authentication hook.
+
+`APMoEApp.serve()` uses this layer internally. Applications that embed APMoE in
+another ASGI app can call `apmoe.serving.app_factory.create_api(...)` directly.
 
 ---
 
-## Architecture
+## API Surface
 
-- `apmoe.serving.app_factory.create_api(app, ...)` builds the FastAPI app.
-- `apmoe.serving.routes.create_router(app)` defines route handlers.
-- `apmoe.serving.middleware` contains reusable middleware and auth hooks.
+Current endpoints are mounted under `/v1`:
 
-`APMoEApp.serve()` uses this layer internally, but you can also embed it in an
-existing ASGI app by calling `create_api(...)` directly.
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/v1/predict` | Run age prediction from a multimodal JSON object. |
+| `GET` | `/v1/health` | Readiness/liveness status from expert load state. |
+| `GET` | `/v1/info` | Runtime metadata, loaded components, and redacted config. |
+| `GET` | `/docs` | Swagger UI generated from the current OpenAPI schema. |
+| `GET` | `/redoc` | ReDoc generated from the current OpenAPI schema. |
+| `GET` | `/openapi.json` | Raw OpenAPI schema. |
+
+Legacy unversioned routes remain mounted for compatibility:
+
+| Current | Legacy |
+|---|---|
+| `/v1/predict` | `/predict` |
+| `/v1/health` | `/health` |
+| `/v1/info` | `/info` |
+
+All API responses include `X-Correlation-ID`. Versioned `/v1/*` route
+responses include `X-API-Version: 1`. Legacy route responses also include
+`Deprecation`, `Sunset`, and `Link` headers; new clients should use `/v1/*`.
 
 ---
 
-## Endpoints
+## `POST /v1/predict`
 
-All endpoints are versioned under `/v1`. Legacy unversioned paths remain
-for backward compatibility and return `Deprecation` + `Sunset` headers to
-communicate migration timelines. Responses also include `X-API-Version: 1`.
-
-### `POST /v1/predict`
+Runs the configured APMoE inference pipeline.
 
 Request:
-- `application/json` body: an object whose keys are modality names and whose values are JSON-serialisable payloads for that modality (values are normalised to bytes before the pipeline).
 
-Response (`200`):
-- `predicted_age`
-- `confidence`
-- `confidence_interval` (`null` if unavailable)
-- `per_expert_outputs`
-- `skipped_experts`
-- `metadata`
+- Header: `Content-Type: application/json`
+- Body: a JSON object mapping modality names to modality payloads.
+- The root body must be an object, not an array.
+- Keys should match configured modality names such as `image` or `keystroke`.
+- String values are forwarded as UTF-8 bytes.
+- Non-string JSON values are serialized to UTF-8 JSON bytes.
+- Missing modalities are allowed; dependent experts are listed in
+  `skipped_experts`.
 
-Error mapping:
-- `PipelineError` -> `503`
-- other `APMoEError` -> `500`
-- body not valid JSON or not a JSON object -> `422`
+Example:
 
-### `GET /v1/health`
+```bash
+curl -X POST http://127.0.0.1:8000/v1/predict \
+  -H "Content-Type: application/json" \
+  -d "{\"keystroke\": [[8, 0, 95.0], [13, 0, 100.0]]}"
+```
 
-Returns expert load/readiness status from `expert_registry.health_check()`.
+Successful response (`200`):
 
-- all experts loaded (or no experts) -> `200`, `{"status": "healthy", ...}`
-- one or more unloaded -> `503`, `{"status": "degraded", ...}`
+```json
+{
+  "predicted_age": 32.5,
+  "confidence": 0.82,
+  "confidence_interval": null,
+  "per_expert_outputs": [
+    {
+      "expert_name": "keystroke_age_expert",
+      "consumed_modalities": ["keystroke"],
+      "predicted_age": 32.5,
+      "confidence": 0.82,
+      "metadata": {
+        "predicted_group": "26-35"
+      }
+    }
+  ],
+  "skipped_experts": ["face_age_expert"],
+  "metadata": {
+    "pipeline_latency_s": 0.006,
+    "available_modalities": ["keystroke"],
+    "failed_modalities": {}
+  }
+}
+```
 
-### `GET /v1/info`
+Response fields:
 
-Returns `APMoEApp.get_info()` output:
-- framework `version`
-- loaded `experts`
-- active `modalities`
-- `aggregator` metadata
-- `serving` configuration
+| Field | Type | Description |
+|---|---|---|
+| `predicted_age` | number | Aggregated age estimate in years. |
+| `confidence` | number | Aggregated confidence in `[0.0, 1.0]`. |
+| `confidence_interval` | array or null | Optional `[lower, upper]` age bounds. |
+| `per_expert_outputs` | array | One row per expert that produced an output. |
+| `skipped_experts` | array | Experts skipped because required modalities were missing. |
+| `metadata` | object | Pipeline latency, available modalities, failed modalities, confidence threshold data, and recommendations when available. |
+
+Per-expert output fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `expert_name` | string | Expert instance name. |
+| `consumed_modalities` | array | Modalities consumed by that expert. |
+| `predicted_age` | number | Expert-level age estimate in years. |
+| `confidence` | number | Expert score in `[0.0, 1.0]`, or `-1.0` when not reported. |
+| `metadata` | object | Expert-specific details such as predicted age group or feature coverage. |
+
+Error responses:
+
+| Status | Body | Cause |
+|---|---|---|
+| `401` | `{"detail": "Unauthorized."}` | Stateless authentication is enabled and credentials are missing or invalid. |
+| `403` | `{"detail": "Forbidden."}` | Authorization is enabled and the token lacks the required scope. |
+| `422` | FastAPI validation detail | Body is malformed JSON or the root value is not an object. |
+| `429` | `{"detail": "Rate limit exceeded: ... "}` | Request count exceeded `serving.rate_limit`. |
+| `503` | `{"detail": "..."}` | The pipeline could not run any expert. |
+| `500` | `{"detail": "..."}` | A framework error escaped prediction handling. |
 
 ---
 
-## Middleware order
+## `GET /v1/health`
 
-`create_api(...)` applies middleware in this order:
+Returns expert readiness from `expert_registry.health_check()`.
 
-1. `CORSMiddleware`
-2. `RequestLoggingMiddleware`
-3. `RateLimitMiddleware` (only when `serving.rate_limit` is set)
-4. `AuthenticationMiddleware` (when `serving.authentication_enabled` is true)
-5. `AuthorizationMiddleware` (when `serving.authorization_enabled` is true)
+Example:
 
-The legacy `AuthMiddleware` still runs when `create_api(auth_plugin=...)` is
-used, but it is mutually exclusive with the newer stateless authn/authz
-middlewares.
+```bash
+curl http://127.0.0.1:8000/v1/health
+```
 
-This order is important so preflight/CORS handling occurs before auth/rate
-checks.
+Healthy response (`200`):
+
+```json
+{
+  "status": "healthy",
+  "experts": {
+    "face_age_expert": true,
+    "keystroke_age_expert": true
+  }
+}
+```
+
+Degraded response (`503`):
+
+```json
+{
+  "status": "degraded",
+  "experts": {
+    "face_age_expert": true,
+    "keystroke_age_expert": false
+  }
+}
+```
+
+An empty expert registry is considered healthy.
 
 ---
 
-## Request logging
+## `GET /v1/info`
 
-For the full security reference and production checklist, see
-[security.md](security.md).
+Returns `APMoEApp.get_info()` for diagnostics and operational inventory.
+
+Example:
+
+```bash
+curl http://127.0.0.1:8000/v1/info
+```
+
+Current response keys include:
+
+| Field | Type | Description |
+|---|---|---|
+| `version` | string | Installed `apmoe` package version. |
+| `experts` | array | `get_info()` output for loaded expert instances. |
+| `modalities` | array | Configured modality names. |
+| `aggregator` | object | Active aggregator metadata. |
+| `serving` | object | Redacted serving configuration. |
+| `environment` | string | Runtime environment, such as `development` or `production`. |
+| `security` | object | Redacted security configuration. |
+| `confidence_threshold` | number or null | Confidence gate used for recommendations. |
+| `expert_failure_policy` | string | Expert failure behavior. |
+| `remote_fallback_policy` | string | Remote-to-local fallback behavior. |
+| `remote_retry` | object | Remote expert retry configuration. |
+| `remote_circuit_breaker` | object | Remote expert circuit-breaker configuration. |
+
+Secrets and sensitive values are redacted before they are returned.
+
+---
+
+## OpenAPI Docs
+
+FastAPI serves generated documentation automatically:
+
+| Path | Description |
+|---|---|
+| `/docs` | Swagger UI with request examples for keystroke triples, IKDD text, precomputed keystroke features, and image plus keystroke payloads. |
+| `/redoc` | ReDoc view of the same OpenAPI schema. |
+| `/openapi.json` | Machine-readable OpenAPI schema. |
+
+The OpenAPI metadata lives in `apmoe.serving.openapi_schemas`. Update that
+module when route shapes or examples change.
+
+---
+
+## Headers
+
+Every response:
+
+| Header | Description |
+|---|---|
+| `X-Correlation-ID` | Inbound safe `X-Correlation-ID` value or a generated UUID4. Use it to correlate logs and client errors. |
+
+Versioned route responses:
+
+| Header | Description |
+|---|---|
+| `X-API-Version: 1` | Current HTTP API version. |
+
+Legacy route responses:
+
+| Header | Description |
+|---|---|
+| `X-API-Version: 1` | Current HTTP API version. |
+| `Deprecation` | Date indicating the route is deprecated. |
+| `Sunset` | Planned end of the legacy route migration window. |
+| `Link` | Link relation pointing clients to documentation. |
+
+Rate-limit failures:
+
+| Header | Description |
+|---|---|
+| `Retry-After: 60` | Clients should wait before retrying. |
+
+Authentication failures:
+
+| Header | Description |
+|---|---|
+| `WWW-Authenticate: Bearer` | Returned by stateless authentication on missing or invalid credentials. |
+
+---
+
+## Middleware
+
+`create_api(...)` configures:
+
+- CORS from `serving.cors_origins`.
+- Structured request logging and correlation IDs.
+- Rate limiting when `serving.rate_limit` is set.
+- Either legacy `AuthMiddleware` or stateless authentication/authorization.
+
+The legacy `auth_plugin` path is mutually exclusive with stateless
+`security_provider` and `authorization_policy`.
+
+---
+
+## Request Logging
 
 `RequestLoggingMiddleware`:
-- accepts a safe inbound `X-Correlation-ID` value or generates a UUID4 value
-- stores it as `request.state.correlation_id`
-- returns it in response header `X-Correlation-ID`
-- emits structured JSON logs with method, path, query, status, duration, client
 
-Use this header for cross-service request tracing.
+- accepts a safe inbound `X-Correlation-ID` value or generates a UUID4 value;
+- stores it as `request.state.correlation_id`;
+- returns it in the `X-Correlation-ID` response header;
+- logs method, path, redacted query string, status, duration, and client host.
 
 Sensitive query parameters such as `token`, `api_key`, and `secret` are
 redacted before logging.
 
 ---
 
-## Security audit hooks
-
-Security-sensitive events are emitted as `SecurityAuditEvent` objects with the
-current correlation ID. The default sink writes structured JSON to
-`apmoe.security.audit`; applications can also attach hooks:
-
-```python
-from apmoe.core.security import SecurityAuditEvent
-
-def send_to_siem(event: SecurityAuditEvent) -> None:
-    ...
-
-apmoe_app.security_audit_hooks.append(send_to_siem)
-api = create_api(apmoe_app, security_provider=provider)
-```
-
-Events include authentication success/failure, authorization allow/deny,
-rate-limit blocks, token invalidation, Redis fallback activation, remote
-endpoint allow/block, remote call success/failure, remote circuit-breaker
-blocks, response-limit blocks, and model integrity pass/fail. Set
-`apmoe.security.audit_enabled=false` to suppress serving audit events or
-`audit_success_events=false` to log only denials/blocks for authn/authz.
-
----
-
-## Rate limiting
+## Rate Limiting
 
 `RateLimitMiddleware` implements a per-client-IP sliding window:
-- window size: 60 seconds
-- limit: `serving.rate_limit` requests/minute
-- on overflow: `429` with `Retry-After: 60`
 
-Important deployment note:
-- `serving.rate_limit_store="memory"` is process-local. With multiple workers,
-  effective total limit is multiplied by worker count.
-- `serving.rate_limit_store="redis"` uses Redis as the shared sliding-window
-  store across workers and nodes. Redis client support is included in the
-  default `pip install apmoe` runtime.
-- If a Redis rate-limit operation fails after startup, APMoE emits
-  `redis_rate_limit_fallback` and uses an in-memory process-local sliding
-  window for that worker. This preserves API availability but the limit is no
-  longer globally coordinated until Redis recovers.
-- For strict global limits across heterogeneous services, Redis or an API
-  gateway in front of APMoE is recommended.
+- window size: 60 seconds;
+- limit: `serving.rate_limit` requests per minute;
+- overflow response: `429` with `Retry-After: 60`.
+
+Stores:
+
+| Store | Behavior |
+|---|---|
+| `memory` | Process-local. With multiple workers, each worker has its own window. |
+| `redis` | Shared across workers and nodes. If Redis fails after startup, APMoE audits the fallback and uses process-local memory for that worker. |
+
+Config:
 
 ```json
 {
@@ -153,9 +299,9 @@ Important deployment note:
 
 ---
 
-## Stateless authentication and authorization
+## Stateless Authentication And Authorization
 
-The new serving security layer is enabled by default:
+Stateless security is controlled by serving config:
 
 ```json
 {
@@ -167,18 +313,9 @@ The new serving security layer is enabled by default:
 ```
 
 When authentication is enabled, `create_api(...)` fails closed unless a
-`StatelessAuthProvider` is supplied. For local demos only, disable both layers:
+`StatelessAuthProvider` is supplied. For local demos, disable both flags.
 
-```json
-{
-  "serving": {
-    "authentication_enabled": false,
-    "authorization_enabled": false
-  }
-}
-```
-
-Default route scopes:
+Default scopes:
 
 | Route | Required scope |
 |---|---|
@@ -186,7 +323,7 @@ Default route scopes:
 | `GET /v1/info`, `GET /info` | `info:read` |
 | `GET /v1/health`, `GET /health` | public |
 
-JWT Bearer setup:
+JWT bearer setup:
 
 ```python
 from apmoe.core.app import APMoEApp
@@ -204,15 +341,14 @@ api = create_api(apmoe_app, security_provider=provider)
 ```
 
 JWTs must include:
-- `sub`: subject/principal id
-- `jti`: stable token id used for invalidation
-- `exp`: expiry timestamp
-- `scope` or `scopes`: permission strings
 
-Invalidation uses `TokenInvalidationStore`. The default
-`InMemoryTokenInvalidationStore` is process-local and appropriate only for
-single-process/local use. In horizontally scaled deployments, select Redis in
-serving config:
+- `sub`: subject/principal id;
+- `jti`: stable token id used for invalidation;
+- `exp`: expiry timestamp;
+- `scope` or `scopes`: permission strings.
+
+Token invalidation uses `serving.token_invalidation_store`. Use Redis for
+shared invalidation across workers:
 
 ```json
 {
@@ -223,77 +359,26 @@ serving config:
 }
 ```
 
-Redis client support is included in the default `pip install apmoe` runtime. You can also inject any
-external implementation through `create_api(..., invalidation_store=...)`:
-
-```python
-class RedisTokenInvalidationStore(TokenInvalidationStore):
-    def __init__(self, redis_client) -> None:
-        self._redis = redis_client
-
-    def is_invalid(self, token_id: str) -> bool:
-        return self._redis.exists(f"apmoe:revoked:{token_id}") == 1
-
-    def invalidate(self, token_id: str, expires_at: datetime) -> None:
-        ttl = max(0, int((expires_at - datetime.now(UTC)).total_seconds()))
-        self._redis.setex(f"apmoe:revoked:{token_id}", ttl, "1")
-```
-
-Pass the same store to `JWTBearerAuthProvider` when constructing the provider.
-Redis is optional and not imported unless a Redis store is selected. If a Redis
-token invalidation operation fails after startup, APMoE emits
-`redis_token_invalidation_fallback` and uses an in-memory process-local
-fallback store. Invalidations made while Redis is unavailable are local to that
-worker and are not replayed into Redis.
-
 ---
 
-## Remote expert security
+## Legacy Authentication Plugin
 
-Remote expert endpoints are governed by `apmoe.security`:
-- non-production defaults missing `remote_endpoint_allowlist` to `["*"]`
-- production remote experts require an explicit allowlist without `"*"`
-- endpoint and manifest hosts are matched case-insensitively against exact
-  hosts or wildcard suffixes such as `"*.example.com"`
-- HTTPS is enforced by default
-- localhost, loopback, private, link-local, reserved, multicast, and metadata
-  IP hosts are blocked unless `remote_allow_private_networks=true`
+Legacy binary auth is still supported through `create_api(auth_plugin=...)`.
+It is opt-in and mutually exclusive with the stateless provider/policy.
 
-Remote responses are capped by `remote_response_max_bytes` before JSON parsing.
-Set `experts[].endpoint_response_max_bytes` to override the global cap for a
-specific expert. Obvious non-JSON content types are rejected.
+Default excluded paths:
 
-Remote inference calls also support transient retries and per-expert circuit
-breakers. Configure `apmoe.remote_retry`, `apmoe.remote_circuit_breaker`, and
-`apmoe.expert_failure_policy` in the top-level config; see
-[configuration.md](configuration.md) for the exact fields and defaults.
-
-Local model artifacts can be pinned with `experts[].integrity.sha256`. Remote
-model integrity uses an RSA-PSS-SHA256 signed manifest verified with a pinned
-public key; a plain hash served by the remote model runtime is intentionally not
-treated as sufficient. See `docs/dev/configuration.md` for config examples.
-
----
-
-## Legacy authentication plugin
-
-Authentication is opt-in via `create_api(auth_plugin=...)`.
-
-Implement `AuthPlugin`:
-- `authenticate(request) -> bool`
-- optionally override `unauthenticated_response()`
-
-Default excluded paths (no auth required):
 - `/health`
 - `/info`
+- `/v1/health`
+- `/v1/info`
 
-You can override excluded paths with `auth_exclude_paths`.
-
-Minimal API-key example:
+Example:
 
 ```python
 from starlette.requests import Request
 from apmoe.serving.middleware import AuthPlugin
+
 
 class ApiKeyAuth(AuthPlugin):
     def __init__(self, valid_key: str) -> None:
@@ -305,9 +390,25 @@ class ApiKeyAuth(AuthPlugin):
 
 ---
 
-## Config knobs used by serving
+## Embedding In Another ASGI App
 
-From `apmoe.serving` and `apmoe.core.config.ServingConfig`:
+```python
+from apmoe.core.app import APMoEApp
+from apmoe.serving.app_factory import create_api
+
+apmoe_app = APMoEApp.from_config("config.json")
+api = create_api(apmoe_app)
+```
+
+Multi-worker `APMoEApp.serve()` uses the factory
+`apmoe.serving.app_factory:create_worker_app`. Each worker reads
+`APMOE_CONFIG_PATH`, bootstraps its own `APMoEApp`, and returns a FastAPI app.
+
+---
+
+## Config Used By Serving
+
+Serving reads these fields:
 
 - `host`
 - `port`
@@ -324,4 +425,4 @@ From `apmoe.serving` and `apmoe.core.config.ServingConfig`:
 - `token_invalidation_redis_url`
 - `token_invalidation_key_prefix`
 
-Environment overrides are documented in `docs/dev/configuration.md`.
+Environment overrides are documented in [configuration.md](configuration.md).

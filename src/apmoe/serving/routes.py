@@ -1,10 +1,11 @@
 """FastAPI route handlers for the APMoE serving layer.
 
-Three endpoints are provided:
+Three route handlers are provided and mounted under both `/v1` and legacy
+unversioned paths by `create_api`:
 
-* ``POST /predict`` — multimodal age prediction via a JSON request body.
-* ``GET /health`` — readiness / liveness probe (checks all experts are loaded).
-* ``GET /info`` — framework metadata (version, experts, modalities, config).
+* ``POST /v1/predict`` and ``POST /predict``: multimodal age prediction.
+* ``GET /v1/health`` and ``GET /health``: readiness/liveness status.
+* ``GET /v1/info`` and ``GET /info``: framework metadata.
 
 Routes are built by :func:`create_router`, which closes over the
 :class:`~apmoe.core.app.APMoEApp` instance supplied by
@@ -25,8 +26,8 @@ from apmoe.core.types import Prediction
 from apmoe.serving.openapi_schemas import (
     HealthResponse,
     InfoResponse,
-    PredictRequestBody,
     PredictionResponse,
+    PredictRequestBody,
 )
 
 if TYPE_CHECKING:
@@ -110,6 +111,9 @@ def create_router(
 
     Args:
         apmoe_app: The bootstrapped :class:`~apmoe.core.app.APMoEApp` instance.
+        api_version: API version header value attached to responses.
+        deprecated: Whether FastAPI should mark the mounted routes as deprecated.
+        deprecation_headers: Optional response headers for legacy routes.
 
     Returns:
         A fully-configured :class:`~fastapi.APIRouter` ready to be included
@@ -118,7 +122,7 @@ def create_router(
     router = APIRouter()
 
     # ------------------------------------------------------------------
-    # POST /predict
+    # POST /predict (mounted as /v1/predict and legacy /predict)
     # ------------------------------------------------------------------
 
     @router.post(
@@ -183,7 +187,7 @@ def create_router(
         return PredictionResponse.model_validate(_prediction_to_dict(prediction))
 
     # ------------------------------------------------------------------
-    # GET /health
+    # GET /health (mounted as /v1/health and legacy /health)
     # ------------------------------------------------------------------
 
     @router.get(
@@ -222,14 +226,16 @@ def create_router(
         return payload  # type: ignore[return-value]
 
     # ------------------------------------------------------------------
-    # GET /info
+    # GET /info (mounted as /v1/info and legacy /info)
     # ------------------------------------------------------------------
 
     @router.get(
         "/info",
         response_model=InfoResponse,
         summary="Framework metadata",
-        response_description="Version, experts, modalities, aggregator, and serving settings snapshot.",
+        response_description=(
+            "Version, experts, modalities, aggregator, and serving settings snapshot."
+        ),
         tags=["Operations"],
         deprecated=deprecated,
     )

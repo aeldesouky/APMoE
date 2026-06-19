@@ -10,17 +10,16 @@ through the HTTP API, and how to wire it into the framework.
 
 1. [How It Works](#how-it-works)
 2. [Files Required](#files-required)
-3. [Input Formats](#input-formats)  
-   3a. [IKDD text format](#1-ikdd-text-format-primary)  
-   3b. [JSON triples format](#2-json-triples-format)  
+3. [Input Formats](#input-formats)
+   3a. [IKDD text format](#1-ikdd-text-format-primary)
+   3b. [JSON triples format](#2-json-triples-format)
    3c. [JSON dict format](#3-json-dict-format)
 4. [Key Code Reference](#key-code-reference)
-5. [HTTP API Usage](#http-api-usage)  
-   5a. [JSON body — cURL](#curl)  
-   5b. [JSON body — Python requests](#python-requests)  
-   5c. [JSON body — JavaScript fetch](#javascript-fetch)  
-   5d. [JSON body — alternative value shapes](#json-body--alternative-value-shapes)  
-   5e. [Multipart form-data](#multipart-form-data-for-file-uploads)
+5. [HTTP API Usage](#http-api-usage)
+   5a. [JSON body — cURL](#curl)
+   5b. [JSON body — Python requests](#python-requests)
+   5c. [JSON body — JavaScript fetch](#javascript-fetch)
+   5d. [JSON body — alternative value shapes](#json-body--alternative-value-shapes)
 6. [Programmatic Usage](#programmatic-usage)
 7. [Configuration](#configuration)
 8. [Response Format](#response-format)
@@ -100,10 +99,9 @@ weights/
 
 ## Input Formats
 
-The `POST /predict` endpoint accepts the keystroke session as the value of
-the **`"keystroke"` key** in a JSON body (recommended), or as an uploaded
-file field in a multipart request. Three data formats are supported for the
-session payload itself:
+The `POST /v1/predict` endpoint accepts the keystroke session as the value of
+the **`"keystroke"` key** in a JSON body. Three data formats are supported for
+the session payload itself:
 
 ### 1. IKDD Text Format (primary)
 
@@ -228,15 +226,13 @@ Start the server with the keystroke config:
 uv run python -m apmoe serve --config configs/keystroke.json
 ```
 
-The endpoint is `POST /predict`. It accepts **two content types**:
+The current endpoint is `POST /v1/predict`. It accepts `application/json`.
+Legacy `POST /predict` remains mounted with deprecation headers, but new clients
+should use `/v1/predict`.
 
-| Content-Type | Use when |
-|---|---|
-| `application/json` | Keystroke data, structured features — **recommended** |
-| `multipart/form-data` | Binary file uploads (images, audio, etc.) |
-
-The **JSON format is preferred** for keystroke data — no file encoding
-overhead, works natively from any HTTP client.
+For keystroke data, send a JSON object whose `keystroke` value is one of the
+supported shapes below. The serving layer serializes non-string JSON values to
+UTF-8 JSON bytes before the keystroke processor receives them.
 
 ---
 
@@ -247,7 +243,7 @@ the session data. For the keystroke modality, the value is a list of
 `[key1, key2, timing_ms]` triples:
 
 ```
-POST /predict
+POST /v1/predict
 Content-Type: application/json
 
 {
@@ -265,7 +261,7 @@ Content-Type: application/json
 #### cURL
 
 ```bash
-curl -X POST http://localhost:8000/predict \
+curl -X POST http://localhost:8000/v1/predict \
   -H "Content-Type: application/json" \
   -d '{
     "keystroke": [
@@ -293,7 +289,7 @@ session = [
 ]
 
 resp = requests.post(
-    "http://localhost:8000/predict",
+    "http://localhost:8000/v1/predict",
     json={"keystroke": session},   # sets Content-Type: application/json automatically
 )
 print(resp.json())
@@ -310,7 +306,7 @@ const session = [
   [8,  73, 620.0],
 ];
 
-const resp = await fetch("http://localhost:8000/predict", {
+const resp = await fetch("http://localhost:8000/v1/predict", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ keystroke: session }),
@@ -322,7 +318,7 @@ console.log(result);
 #### axios
 
 ```javascript
-const { data } = await axios.post("http://localhost:8000/predict", {
+const { data } = await axios.post("http://localhost:8000/v1/predict", {
   keystroke: [
     [8, 0, 95.0],
     [13, 0, 100.0],
@@ -348,32 +344,6 @@ with `[` or `{`):
 
 // Raw IKDD text as a string
 { "keystroke": "8-0,95.0\n13-0,100.0\n65-83,145.2" }
-```
-
----
-
-### Multipart form-data (for file uploads)
-
-Use multipart only when uploading **binary files** (images, audio).
-For keystroke data the JSON format is always simpler.
-
-```bash
-# IKDD text file
-curl -X POST http://localhost:8000/predict \
-  -F "keystroke=@session.txt"
-
-# JSON file
-curl -X POST http://localhost:8000/predict \
-  -F "keystroke=@session.json;type=application/json"
-```
-
-```python
-# Python requests — file upload
-with open("session.txt", "rb") as f:
-    resp = requests.post(
-        "http://localhost:8000/predict",
-        files={"keystroke": ("session.txt", f, "text/plain")},
-    )
 ```
 
 ---
@@ -488,7 +458,7 @@ No embedder is configured for the `keystroke` modality — the expert receives
 
 ## Response Format
 
-A successful `POST /predict` returns HTTP 200 with:
+A successful `POST /v1/predict` returns HTTP 200 with:
 
 ```json
 {
@@ -530,8 +500,8 @@ A successful `POST /predict` returns HTTP 200 with:
 
 | Code | Cause |
 |---|---|
-| 422 | Body could not be parsed — invalid JSON, non-object JSON root, or malformed multipart |
-| 503 | No runnable experts (e.g. model weights not loaded) |
+| 422 | Body could not be parsed: invalid JSON or non-object JSON root |
+| 503 | No runnable experts or the pipeline could not produce a prediction |
 | 500 | Unexpected framework error |
 
 ---
@@ -617,7 +587,7 @@ function buildSession(events) {
 async function submitSession() {
   const session = buildSession(events);
 
-  const resp = await fetch("http://localhost:8000/predict", {
+  const resp = await fetch("http://localhost:8000/v1/predict", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ keystroke: session }),

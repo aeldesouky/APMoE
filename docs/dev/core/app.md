@@ -203,12 +203,12 @@ Exposes:
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/predict` | POST | Submit raw inputs; returns a `Prediction` as JSON. |
-| `/health` | GET | Calls `app.validate()` and returns status code 200/503. |
-| `/info` | GET | Returns `app.get_info()` as JSON. |
+| `/v1/predict` | POST | Submit raw inputs; returns a `Prediction` as JSON. |
+| `/v1/health` | GET | Expert readiness/liveness status, returning 200 or 503. |
+| `/v1/info` | GET | Returns `app.get_info()` as JSON. |
 
-> **Phase 4:** The HTTP serving layer is implemented in Phase 4. Calling `serve()`
-> in Phase 3 raises `ServingError("HTTP serving not yet implemented — Phase 4")`.
+Legacy `/predict`, `/health`, and `/info` aliases remain mounted with
+deprecation headers for compatibility.
 
 ---
 

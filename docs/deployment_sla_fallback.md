@@ -419,8 +419,8 @@ Measured on May 3, 2026, single worker, localhost:
 
 | Endpoint | Concurrency | Duration | Throughput | Error rate | Latency |
 |---|---:|---:|---:|---:|---|
-| `GET /health` | 20 users | 15 s | 2,208 RPS | 0% | avg 9.0 ms, p95 10.7 ms, p99 12.1 ms |
-| `POST /predict` keystroke | 10 users | 15 s | 1,620 RPS | 0% | avg 6 ms, p95 8 ms, p99 13 ms |
+| `GET /v1/health` | 20 users | 15 s | 2,208 RPS | 0% | avg 9.0 ms, p95 10.7 ms, p99 12.1 ms |
+| `POST /v1/predict` keystroke | 10 users | 15 s | 1,620 RPS | 0% | avg 6 ms, p95 8 ms, p99 13 ms |
 
 Additional remote LLM testing recorded approximately 5.9 to 6.0 seconds of
 pipeline latency for a local LM Studio vision-language model path. That path is
