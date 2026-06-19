@@ -95,7 +95,7 @@ from apmoe.processing.base import (
     embedder_registry,
 )
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 __all__ = [
     "APMoEConfig",
     # Exceptions

@@ -42,10 +42,10 @@ Before publishing a release:
 5. Create a GitHub release whose tag matches the package version, such as
    `v0.1.0` for version `0.1.0`.
 
-If the workflow reports a mismatch such as `Release tag 'v0.1.2' does not
-match package version '0.1.1'`, the tag is pointing at an older commit. Delete
-and recreate the GitHub release/tag from the current `main` commit, or publish a
-new patch version with a new tag.
+If the workflow reports a mismatch such as `Release tag 'vX.Y.Z' does not
+match package version 'X.Y.(Z-1)'`, the tag is pointing at an older commit.
+Delete and recreate the GitHub release/tag from the current `main` commit, or
+publish a new patch version with a new tag.
 
 The workflow fails early if the release tag does not match the package version.
 PyPI does not allow overwriting an existing version, so every release must use a
