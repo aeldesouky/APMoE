@@ -36,8 +36,16 @@ Before publishing a release:
    `packages/apmoe-models/src/apmoe_models/__init__.py` to the same version.
 2. Run the tests and package checks.
 3. Commit and push to `main`.
-4. Create a GitHub release whose tag matches the package version, such as
+4. Create the release tag from that pushed commit, not from an older commit.
+   The tag must point at the commit that contains the matching package
+   metadata.
+5. Create a GitHub release whose tag matches the package version, such as
    `v0.1.0` for version `0.1.0`.
+
+If the workflow reports a mismatch such as `Release tag 'v0.1.2' does not
+match package version '0.1.1'`, the tag is pointing at an older commit. Delete
+and recreate the GitHub release/tag from the current `main` commit, or publish a
+new patch version with a new tag.
 
 The workflow fails early if the release tag does not match the package version.
 PyPI does not allow overwriting an existing version, so every release must use a
