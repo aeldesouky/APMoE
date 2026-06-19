@@ -6,8 +6,9 @@ experts, enable fallback, plug in Redis-backed stores, and run the service.
 
 APMoE is an inference framework. It wires your processors, cleaning steps,
 experts, aggregators, security settings, and serving layer from one
-`config.json`. Model artifacts are not shipped in PyPI wheels; you download or
-provide them explicitly.
+`config.json`. The default PyPI wheel includes the demo model artifact files;
+`apmoe download-models` copies those files into each project so local paths stay
+explicit and easy to replace.
 
 ---
 
@@ -21,19 +22,18 @@ pip install apmoe
 
 The default install includes the framework core, CLI, serving stack, local and
 remote expert runtimes, security features, Redis client integration, image/ONNX
-support, TensorFlow, and Torch. It does not include model artifact files.
+support, TensorFlow, Torch, and built-in demo model artifact files.
 
 Install commands:
 
 | Goal | Install command |
 |---|---|
-| Runtime use, including serving, remote experts, security, Redis, and ML backends | `pip install apmoe` |
-| Runtime plus packaged demo model artifacts | `pip install "apmoe[models]"` |
+| Runtime use, including serving, remote experts, security, Redis, ML backends, and demo artifacts | `pip install apmoe` |
 | Contributor environment | `pip install -e ".[dev]"` |
 
 The old runtime extra names such as `apmoe[security]` and `apmoe[redis]` remain
-as compatibility aliases, but users no longer need them. The `models` extra is
-different: it installs the separate `apmoe-models` artifact package.
+as compatibility aliases, but users no longer need them. The `models` extra also
+remains as a compatibility alias; demo artifacts are bundled in `apmoe`.
 
 ---
 
@@ -77,22 +77,15 @@ apmoe download-models --dest weights --model all
 ```
 
 `apmoe download-models` uses local configured sources first. If no local source
-is available, it tries the version-matched `apmoe-models` package from PyPI and
-copies artifacts from that package. If the model package is unavailable, it
-falls back to release-hosted artifact URLs and still verifies SHA-256 checksums
-after download.
+is available, it copies the demo artifacts bundled in the installed `apmoe`
+package. If those resources are unavailable, it falls back to release-hosted
+artifact URLs and still verifies SHA-256 checksums after download.
 
-You can also install the model package up front:
-
-```bash
-pip install "apmoe[models]"
-```
-
-The main `apmoe` wheel does not include model binaries. To copy model artifacts
-from a local source directory instead of PyPI, set:
+To copy model artifacts from a local source directory instead of the installed
+package, set:
 
 ```bash
-export APMOE_MODEL_SOURCE_DIR=/path/to/apmoe-models
+export APMOE_MODEL_SOURCE_DIR=/path/to/apmoe-model-files
 apmoe download-models --dest weights
 ```
 
@@ -267,8 +260,8 @@ Pin a local artifact hash when model files are managed outside the package:
 
 The default package includes the backends used by built-in experts. ONNX,
 TensorFlow/Keras, PyTorch, Pillow, remote HTTP, security, and Redis client
-dependencies are installed by `pip install apmoe`. Install `apmoe[models]` or
-run `apmoe download-models` to acquire packaged demo model artifacts.
+dependencies and demo artifacts are installed by `pip install apmoe`. Run
+`apmoe download-models` to copy packaged demo model artifacts into a project.
 
 ---
 

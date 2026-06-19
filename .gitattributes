@@ -1,6 +1,5 @@
 *.keras binary
 *.onnx binary
 *.pth.zip binary
-/packages/apmoe-models/src/apmoe_models/weights/keystroke_constants.json text eol=lf
 /src/apmoe/weights/keystroke_constants.json text eol=lf
 /weights/keystroke_constants.json text eol=lf

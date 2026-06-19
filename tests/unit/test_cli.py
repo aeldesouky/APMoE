@@ -464,7 +464,7 @@ class TestDownloadModelsCommand:
         assert result.exit_code != 0
         assert "No source is configured" in result.output
 
-    def test_download_models_installs_model_package_when_source_missing(
+    def test_download_models_install_package_option_does_not_require_pypi(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -476,18 +476,7 @@ class TestDownloadModelsCommand:
         source_file.write_bytes(payload)
         expected_sha = hashlib.sha256(payload).hexdigest()
         self._install_fake_catalog(monkeypatch, expected_sha=expected_sha)
-        install_mock = MagicMock()
-        monkeypatch.setattr(models, "_install_model_package_from_pypi", install_mock)
-
-        calls = {"count": 0}
-
-        def fake_resolve(_artifact: models.ModelArtifact) -> Path | None:
-            calls["count"] += 1
-            if calls["count"] == 1:
-                return None
-            return source_file
-
-        monkeypatch.setattr(models, "_resolve_artifact_source", fake_resolve)
+        monkeypatch.setattr(models, "_resolve_artifact_source", lambda _artifact: source_file)
 
         runner = CliRunner()
         result = runner.invoke(
@@ -496,15 +485,14 @@ class TestDownloadModelsCommand:
         )
 
         assert result.exit_code == 0, result.output
-        install_mock.assert_called_once()
         assert (tmp_path / "weights" / "fake_model.bin").read_bytes() == payload
 
-    def test_download_models_falls_back_to_remote_url_when_package_install_fails(
+    def test_download_models_falls_back_to_remote_url_when_package_resource_missing(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Missing PyPI artifacts should not block release URL acquisition."""
+        """Missing bundled resources should not block release URL acquisition."""
         source = tmp_path / "remote"
         source.mkdir()
         payload = b"model-bytes"
@@ -521,10 +509,6 @@ class TestDownloadModelsCommand:
             license_note="test artifact",
         )
         monkeypatch.setattr(models, "MODEL_ARTIFACTS", (artifact,))
-        install_mock = MagicMock(
-            side_effect=ConfigurationError("missing model package")
-        )
-        monkeypatch.setattr(models, "_install_model_package_from_pypi", install_mock)
         monkeypatch.setattr(models, "_resolve_artifact_source", lambda _artifact: None)
 
         runner = CliRunner()
@@ -534,7 +518,6 @@ class TestDownloadModelsCommand:
         )
 
         assert result.exit_code == 0, result.output
-        install_mock.assert_called_once()
         assert (tmp_path / "weights" / "fake_model.bin").read_bytes() == payload
 
 

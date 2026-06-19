@@ -65,17 +65,21 @@ def test_expected_optional_extras_exist() -> None:
         "redis",
     ):
         assert extras[alias] == []
-    assert extras["models"] == [f"apmoe-models=={project['version']}"]
+    assert extras["models"] == []
     assert "pytest>=8.0" in extras["dev"]
 
 
-def test_model_artifacts_are_excluded_from_builds() -> None:
-    """PyPI artifacts should not include demo model binaries."""
+def test_model_artifacts_are_packaged_under_apmoe() -> None:
+    """PyPI artifacts should ship demo models inside the main apmoe package."""
     hatch = _pyproject()["tool"]["hatch"]["build"]  # type: ignore[index]
     excluded = set(hatch["exclude"])  # type: ignore[index]
+    artifacts = set(hatch["artifacts"])  # type: ignore[index]
 
-    assert "/src/apmoe/weights/**" in excluded
     assert "/weights/**" in excluded
+    assert "/src/apmoe/weights/mobilenet_age_model.pth.zip" in excluded
+    assert "src/apmoe/weights/face_age_expert.keras" in artifacts
+    assert "src/apmoe/weights/keystroke_age_expert.onnx" in artifacts
+    assert "src/apmoe/weights/keystroke_constants.json" in artifacts
 
 
 def test_extension_entry_point_groups_are_declared() -> None:
@@ -107,22 +111,11 @@ def test_package_versions_are_in_sync() -> None:
 
     assert match is not None
     assert project["version"] == match.group(1)  # type: ignore[index]
-    model_project = tomllib.loads(
-        Path("packages/apmoe-models/pyproject.toml").read_text(encoding="utf-8")
-    )["project"]
-    model_init_text = Path("packages/apmoe-models/src/apmoe_models/__init__.py").read_text(
-        encoding="utf-8"
-    )
-    model_match = re.search(r'^__version__ = "([^"]+)"$', model_init_text, re.MULTILINE)
-
-    assert model_match is not None
-    assert model_project["version"] == project["version"]  # type: ignore[index]
-    assert model_match.group(1) == project["version"]  # type: ignore[index]
 
 
-def test_model_artifact_package_contains_expected_files() -> None:
-    """The optional PyPI model package should contain the demo artifacts."""
-    weights_dir = Path("packages/apmoe-models/src/apmoe_models/weights")
+def test_apmoe_package_contains_expected_model_files() -> None:
+    """The main PyPI package should contain the demo artifacts."""
+    weights_dir = Path("src/apmoe/weights")
 
     assert (weights_dir / "face_age_expert.keras").is_file()
     assert (weights_dir / "keystroke_age_expert.onnx").is_file()
@@ -131,7 +124,7 @@ def test_model_artifact_package_contains_expected_files() -> None:
 
 def test_model_artifact_manifest_matches_packaged_files() -> None:
     """Packaged model bytes should match the acquisition manifest."""
-    weights_dir = Path("packages/apmoe-models/src/apmoe_models/weights")
+    weights_dir = Path("src/apmoe/weights")
 
     for artifact in MODEL_ARTIFACTS:
         path = weights_dir / artifact.filename
@@ -150,4 +143,5 @@ def test_pypi_trusted_publishing_workflow_exists() -> None:
     assert "group: pypi-publish" in text
     assert "github.event.release.tag_name" in text
     assert "Version mismatch:" in text
-    assert text.index("Publish apmoe-models to PyPI") < text.index("Publish apmoe to PyPI")
+    assert "Publish apmoe-models to PyPI" not in text
+    assert "Publish apmoe to PyPI" in text

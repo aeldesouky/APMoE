@@ -3,13 +3,9 @@
 from __future__ import annotations
 
 import hashlib
-import importlib
-import importlib.metadata
 import importlib.resources
 import os
 import shutil
-import subprocess
-import sys
 import urllib.parse
 import urllib.request
 from contextlib import suppress
@@ -21,11 +17,9 @@ from typing import Literal
 from apmoe.core.exceptions import ConfigurationError
 
 ModelSelection = Literal["all", "face", "keystroke"]
-MODEL_PACKAGE_DISTRIBUTION = "apmoe-models"
-MODEL_PACKAGE_MODULE = "apmoe_models"
 MODEL_ARTIFACT_SOURCE_URL_TEMPLATE = (
     "https://raw.githubusercontent.com/aeldesouky/APMoE/{ref}/"
-    "packages/apmoe-models/src/apmoe_models/weights/{filename}"
+    "src/apmoe/weights/{filename}"
 )
 
 
@@ -99,13 +93,10 @@ def download_model_artifacts(
 ) -> list[Path]:
     """Copy or download selected model artifacts into *dest*.
 
-    Local source checkouts can provide model files from ``src/apmoe/weights``.
-    PyPI users can install the ``apmoe-models`` artifact package through
-    ``pip install "apmoe[models]"``. CLI callers may set
-    ``install_model_package=True`` to install that package automatically when
-    no local source is available. If PyPI package acquisition is unavailable,
-    built-in artifacts can fall back to release-hosted source URLs. Packaged
-    ``apmoe`` wheels intentionally omit model binaries.
+    Installed ``apmoe`` wheels include the demo artifacts under
+    ``apmoe/weights``. Source checkouts can provide the same model files from
+    ``src/apmoe/weights``. If a local/package source is unavailable, built-in
+    artifacts can fall back to release-hosted source URLs.
 
     Args:
         dest: Destination directory.
@@ -113,8 +104,8 @@ def download_model_artifacts(
         force: Overwrite destination files when they already exist.
         skip_existing: Leave existing destination files untouched unless
             ``force`` is true.
-        install_model_package: Install ``apmoe[models]`` from PyPI when the
-            selected artifact source is unavailable locally.
+        install_model_package: Deprecated compatibility flag. Model artifacts
+            are bundled in the main ``apmoe`` wheel.
 
     Returns:
         Paths that were copied or downloaded.
@@ -127,8 +118,6 @@ def download_model_artifacts(
     dest_path.mkdir(parents=True, exist_ok=True)
 
     written: list[Path] = []
-    install_attempted = False
-    install_error: ConfigurationError | None = None
     for artifact in selected_artifacts(model):
         target = dest_path / artifact.filename
         if target.exists() and skip_existing and not force:
@@ -140,39 +129,19 @@ def download_model_artifacts(
             )
 
         source = _resolve_artifact_source(artifact)
-        if source is None and install_model_package and not install_attempted:
-            install_attempted = True
-            try:
-                _install_model_package_from_pypi()
-            except ConfigurationError as exc:
-                install_error = exc
-        if source is None and install_model_package and install_error is None:
-            source = _resolve_artifact_source(artifact)
         if source is None:
             source = _resolve_remote_artifact_source(artifact)
         if source is None:
             raise ConfigurationError(
                 "No source is configured for model artifact "
-                f"'{artifact.filename}'. Wheels do not bundle demo model files; "
-                f"install them with `pip install \"apmoe[models]\"`, allow "
-                "release artifact downloads, set "
+                f"'{artifact.filename}'. The main `apmoe` wheel bundles demo "
+                "model files; allow release artifact downloads, set "
                 "APMOE_MODEL_SOURCE_DIR to a directory containing the files, "
                 f"or set APMOE_MODEL_SOURCE_{artifact.key.upper()} to a file path or URL.",
                 context={"artifact": artifact.key, "filename": artifact.filename},
             )
 
-        try:
-            _copy_or_download(source, target)
-        except ConfigurationError as exc:
-            if install_error is not None:
-                raise ConfigurationError(
-                    f"{exc} The PyPI model package install also failed.",
-                    context={
-                        **exc.context,
-                        "model_package_install_error": str(install_error),
-                    },
-                ) from exc
-            raise
+        _copy_or_download(source, target)
         _verify_sha256(target, artifact.sha256)
         written.append(target)
 
@@ -193,13 +162,9 @@ def _resolve_artifact_source(
         if candidate.exists():
             return candidate
 
-    package_candidate = Path(__file__).resolve().parents[1] / "weights" / artifact.filename
-    if package_candidate.exists():
-        return package_candidate
-
-    model_package_source = _resolve_model_package_artifact(artifact)
-    if model_package_source is not None:
-        return model_package_source
+    package_source = _resolve_apmoe_package_artifact(artifact)
+    if package_source is not None:
+        return package_source
 
     return None
 
@@ -214,12 +179,12 @@ def _resolve_remote_artifact_source(artifact: ModelArtifact) -> str | None:
     return artifact.source_url.format(ref=ref, version=_apmoe_version(), filename=filename)
 
 
-def _resolve_model_package_artifact(
+def _resolve_apmoe_package_artifact(
     artifact: ModelArtifact,
 ) -> Traversable | None:
-    """Return an artifact resource from ``apmoe-models`` if installed."""
+    """Return an artifact resource from the installed ``apmoe`` package."""
     try:
-        candidate = importlib.resources.files(MODEL_PACKAGE_MODULE).joinpath(
+        candidate = importlib.resources.files("apmoe").joinpath(
             "weights",
             artifact.filename,
         )
@@ -266,51 +231,11 @@ def _copy_or_download(
     )
 
 
-def model_package_requirement() -> str:
-    """Return the PyPI requirement used to install packaged model artifacts."""
-    return f"{MODEL_PACKAGE_DISTRIBUTION}=={_apmoe_version()}"
-
-
 def _apmoe_version() -> str:
     """Return the installed or source-tree APMoE version."""
-    try:
-        return importlib.metadata.version("apmoe")
-    except importlib.metadata.PackageNotFoundError:
-        from apmoe import __version__ as version
+    from apmoe import __version__ as version
+
     return version
-
-
-def _install_model_package_from_pypi() -> None:
-    """Install the version-matched ``apmoe-models`` package from PyPI."""
-    if _model_package_is_available():
-        return
-
-    requirement = model_package_requirement()
-    cmd = [sys.executable, "-m", "pip", "install", requirement]
-    result = subprocess.run(
-        cmd,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    importlib.invalidate_caches()
-    if result.returncode == 0 and _model_package_is_available():
-        return
-
-    details = (result.stderr or result.stdout).strip()
-    raise ConfigurationError(
-        f"Could not install model artifact package from PyPI: {requirement}.",
-        context={"requirement": requirement, "pip_output": details},
-    )
-
-
-def _model_package_is_available() -> bool:
-    """Return whether the model artifact package can be imported."""
-    try:
-        importlib.resources.files(MODEL_PACKAGE_MODULE)
-    except ModuleNotFoundError:
-        return False
-    return True
 
 
 def _verify_sha256(path: Path, expected: str) -> None:

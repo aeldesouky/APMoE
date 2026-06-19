@@ -33,8 +33,7 @@ Datasets are **not included** in this repository due to licensing restrictions b
 
 APMoE requires **Python 3.11+**. The default package installs the framework,
 CLI, serving stack, local/remote expert runtimes, security features, Redis
-client integration, and ML backends. PyPI wheels still do **not** ship model
-artifact files; download or provide those explicitly.
+client integration, ML backends, and the built-in demo model artifact files.
 
 ```bash
 pip install apmoe
@@ -44,7 +43,7 @@ Optional extras:
 
 | Extra | Adds |
 |---|---|
-| `models` | Installs the separate `apmoe-models` artifact package used by `apmoe download-models` |
+| `models` | Backward-compatible alias; demo model artifacts are included in `apmoe` |
 | `serve`, `image`, `onnx`, `tensorflow`, `torch`, `remote`, `security`, `redis` | Backward-compatible aliases; these runtime dependencies are already included by default |
 | `dev` | Test, lint, type-check, build, and publishing tools |
 
@@ -74,8 +73,9 @@ Optional extras:
 
 ## Usage
 
-APMoE is designed as a framework package: install the runtime you need, create a
-project scaffold, then provide or download model artifacts explicitly.
+APMoE is designed as a framework package: install it, create a project scaffold,
+then copy the bundled demo artifacts into the project or provide your own model
+files.
 
 For a full walkthrough that covers installation extras, project scaffolding,
 local extensions, package entry-point extensions, local and remote experts,
@@ -100,18 +100,14 @@ apmoe download-models --dest weights
 ```
 
 The command uses local configured sources first. If no local source is found,
-it tries the version-matched `apmoe-models` package from PyPI. If that package
-is unavailable, it falls back to release-hosted artifact URLs and verifies the
-downloaded files. You can also install models up front:
-
-```bash
-pip install "apmoe[models]"
-```
+it copies the demo artifacts bundled in the installed `apmoe` package. If those
+resources are unavailable, it falls back to release-hosted artifact URLs and
+verifies the downloaded files.
 
 When running from a source checkout, `apmoe init my_app --builtin` uses the same
 model acquisition path and can copy local demo artifacts into the scaffold. The
-main `apmoe` wheel does not bundle model files; use `apmoe[models]`, set
-`APMOE_MODEL_SOURCE_DIR`, or provide your own weights.
+main `apmoe` wheel bundles the demo model files; set `APMOE_MODEL_SOURCE_DIR`
+only when you want to provide your own weights.
 
 The scaffold is local-only by default. When you run `apmoe validate`,
 `apmoe serve`, or `apmoe predict`, the CLI prints an expert summary showing

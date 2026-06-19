@@ -56,9 +56,9 @@ Notes:
   non-interactive scripts.
 - `apmoe init --builtin` uses the same acquisition helper as
   `apmoe download-models`. Source checkouts can copy local demo artifacts;
-  PyPI wheels install/use the version-matched `apmoe-models` package when
-  local sources are not configured, then fall back to release-hosted artifact
-  URLs if the package is not available.
+  PyPI wheels copy the demo artifacts bundled in the installed `apmoe` package,
+  then fall back to release-hosted artifact URLs if package resources are not
+  available.
 
 ---
 
@@ -78,13 +78,11 @@ Options:
 - `--skip-existing/--no-skip-existing` controls existing-file behavior.
 
 The command verifies SHA-256 checksums after every copy or download. PyPI
-wheels do not include model binaries in the main `apmoe` package; by default
-the command tries to install `apmoe-models` from PyPI when needed, then falls
-back to release-hosted artifact URLs. Use `--no-install-package` to skip the
-PyPI install attempt and download from release URLs directly, configure
-`APMOE_MODEL_SOURCE_DIR` to point at a directory containing the expected
-filenames, set `APMOE_MODEL_SOURCE_REF` to override the Git ref used for release
-URLs, or use per-artifact variables such as `APMOE_MODEL_SOURCE_FACE`.
+wheels include model binaries in the main `apmoe` package; by default the
+command copies those bundled resources. Configure `APMOE_MODEL_SOURCE_DIR` to
+point at a directory containing the expected filenames, set
+`APMOE_MODEL_SOURCE_REF` to override the Git ref used for release URL fallback,
+or use per-artifact variables such as `APMOE_MODEL_SOURCE_FACE`.
 
 ---
 

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "apmoe"
-version = "0.1.5"
+version = "0.1.6"
 description = "APMoE: Age Prediction using Mixture of Experts - an inference-only, IoC-based Python framework"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -46,8 +46,8 @@ Repository = "https://github.com/aeldesouky/APMoE"
 Issues = "https://github.com/aeldesouky/APMoE/issues"
 
 [project.optional-dependencies]
-# Backward-compatible aliases. The default install now includes all runtime
-# integrations; model artifact files are still acquired explicitly.
+# Backward-compatible aliases. The default install now includes runtime
+# integrations and bundled demo model artifacts.
 serve = []
 image = []
 onnx = []
@@ -56,9 +56,7 @@ torch = []
 remote = []
 security = []
 redis = []
-models = [
-    "apmoe-models==0.1.5",
-]
+models = []
 dev = [
     "build>=1.2",
     "mypy>=1.9",
@@ -100,15 +98,17 @@ median = "apmoe.aggregation.builtin:MedianAggregator"
 
 [tool.hatch.build]
 exclude = [
-    "/src/apmoe/weights/**",
     "/weights/**",
+    "/src/apmoe/weights/mobilenet_age_model.pth.zip",
+]
+artifacts = [
+    "src/apmoe/weights/face_age_expert.keras",
+    "src/apmoe/weights/keystroke_age_expert.onnx",
+    "src/apmoe/weights/keystroke_constants.json",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/apmoe"]
-
-[tool.uv.sources]
-apmoe-models = { path = "packages/apmoe-models" }
 
 # ---------------------------------------------------------------------------
 # Ruff (linter + formatter)

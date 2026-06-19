@@ -63,8 +63,8 @@ Config shape:
 
 Local experts use `weights`. The default install includes ONNX, TensorFlow,
 Torch, Pillow, remote HTTP, security, and Redis client dependencies. Demo model
-artifact files come from `apmoe[models]`, `apmoe download-models`, or a local
-`APMOE_MODEL_SOURCE_DIR`.
+artifact files are bundled in `apmoe`; use `apmoe download-models` to copy them
+into a project, or set `APMOE_MODEL_SOURCE_DIR` to provide your own files.
 
 ### Application-Local Extensions
 

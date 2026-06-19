@@ -3,9 +3,10 @@
 APMoE is licensed under the MIT License.
 
 This repository contains framework source code, documentation, configuration
-examples, tests, scripts, and demo model artifacts used for local development.
-PyPI wheels intentionally do not include the demo model artifacts; users must
-download them explicitly or provide their own weights. Unless a file states
+examples, tests, scripts, and demo model artifacts used for local development
+and quick-start scaffolds. PyPI wheels include the packaged demo model
+artifacts under `apmoe/weights`; users copy them into a project with
+`apmoe download-models` or provide their own weights. Unless a file states
 otherwise, project-authored materials may be used, copied,
 modified, merged, published, distributed, sublicensed, and sold under the MIT
 License terms.
@@ -51,10 +52,11 @@ packaged into distributions.
 ## Model Artifacts
 
 Demo model artifacts are available in source checkouts to make local scaffolding
-and demo flows runnable. They are excluded from PyPI wheels and must be acquired
-with `apmoe download-models`, copied from a configured `APMOE_MODEL_SOURCE_DIR`,
-or replaced with operator-owned weights. Before distributing a product or hosted
-service that uses any model artifact, confirm:
+and demo flows runnable. They are included in PyPI wheels under `apmoe/weights`
+and copied into application projects with `apmoe download-models`. They can
+also be copied from a configured `APMOE_MODEL_SOURCE_DIR` or replaced with
+operator-owned weights. Before distributing a product or hosted service that
+uses any model artifact, confirm:
 
 - the source training data allows the intended use;
 - the trained artifact may be redistributed or hosted;
@@ -94,13 +96,14 @@ actually shipped with that application.
 The default `pip install apmoe` runtime includes the framework, serving,
 remote, security, Redis client, image, ONNX, TensorFlow, and Torch
 dependencies. Runtime extra names remain as compatibility aliases. The
-`models` extra installs the separate `apmoe-models` artifact package.
+`models` extra remains as a compatibility alias; demo model artifacts are
+already included in the default `apmoe` wheel.
 
 | Install path | Runtime dependencies likely present | Notice impact |
 |---|---|---|
 | `apmoe` | Click, Pydantic, NumPy, FastAPI, Uvicorn, python-multipart, Pillow, ONNX Runtime, TensorFlow/Keras, Torch, HTTPX, PyJWT, cryptography, redis client | Include notices for all runtime dependencies; comply with crypto-library export/security review policies where applicable. |
 | Runtime alias extras such as `apmoe[serve]`, `apmoe[security]`, or `apmoe[redis]` | Same as `apmoe`; dependencies are already included by default | Same notice set as `apmoe`. |
-| `apmoe[models]` / `apmoe-models` | Packaged demo model artifacts | Include model provenance and redistribution notices; confirm production rights before redistributing. |
+| `apmoe[models]` | Compatibility alias; model artifacts are already included in `apmoe` | Include model provenance and redistribution notices; confirm production rights before redistributing. |
 | `apmoe[dev]` | pytest, ruff, mypy, pre-commit | Usually development-only; not included in production redistribution unless packaged into the image. |
 
 ## Recommended Distribution Checklist

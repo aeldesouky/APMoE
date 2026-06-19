@@ -1,10 +1,9 @@
 # Publishing to PyPI
 
-APMoE publishes two distributions through GitHub Actions and PyPI Trusted
+APMoE publishes one distribution through GitHub Actions and PyPI Trusted
 Publishing:
 
-- `apmoe`: framework code and runtime dependencies, without model artifacts
-- `apmoe-models`: demo model artifact package used by `apmoe[models]`
+- `apmoe`: framework code, runtime dependencies, and bundled demo model artifacts
 
 The workflow file is:
 
@@ -12,7 +11,7 @@ The workflow file is:
 .github/workflows/publish.yml
 ```
 
-When configuring each PyPI project publisher, use:
+When configuring the PyPI project publisher, use:
 
 ```text
 Owner: aeldesouky
@@ -21,21 +20,16 @@ Workflow filename: publish.yml
 Environment name: pypi
 ```
 
-Create this trusted publisher for both PyPI projects: `apmoe` and
-`apmoe-models`.
+Create this trusted publisher for the PyPI project: `apmoe`.
 
 The workflow runs when a GitHub release is published and can also be started
 manually from the Actions tab. It builds source distributions and wheels for
-both packages, runs `twine check`, smoke-installs the wheels, and publishes
-with OIDC. The workflow publishes `apmoe-models` first, then `apmoe`, so the
-framework package is not released if the model artifact package cannot be
-published. No PyPI API token secret is required.
+the package, runs `twine check`, smoke-installs the wheel, copies bundled model
+artifacts, and publishes with OIDC. No PyPI API token secret is required.
 
 Before publishing a release:
 
-1. Update `pyproject.toml`, `src/apmoe/__init__.py`,
-   `packages/apmoe-models/pyproject.toml`, and
-   `packages/apmoe-models/src/apmoe_models/__init__.py` to the same version.
+1. Update `pyproject.toml` and `src/apmoe/__init__.py` to the same version.
 2. Run the tests and package checks.
 3. Commit and push to `main`.
 4. Create the release tag from that pushed commit, not from an older commit.
@@ -61,7 +55,6 @@ uv build --wheel --sdist --out-dir .pytest-tmp-pypi-publish
 python -m twine check .pytest-tmp-pypi-publish/*
 ```
 
-The `apmoe` wheel excludes model artifacts. The `apmoe-models` wheel contains
-the packaged demo artifacts. Users acquire files with `pip install
-"apmoe[models]"`, `apmoe download-models`, or their own configured artifact
-source.
+The `apmoe` wheel contains the packaged demo artifacts under `apmoe/weights`.
+Users copy files into a project with `apmoe download-models` or provide their
+own configured artifact source.
