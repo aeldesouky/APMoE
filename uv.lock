@@ -48,7 +48,7 @@ wheels = [
 
 [[package]]
 name = "apmoe"
-version = "0.1.3"
+version = "0.1.4"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -114,7 +114,7 @@ provides-extras = ["serve", "image", "onnx", "tensorflow", "torch", "remote", "s
 
 [[package]]
 name = "apmoe-models"
-version = "0.1.3"
+version = "0.1.4"
 source = { directory = "packages/apmoe-models" }
 
 [[package]]

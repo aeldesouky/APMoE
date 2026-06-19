@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from importlib import resources
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 
 
 def weights() -> resources.abc.Traversable:
