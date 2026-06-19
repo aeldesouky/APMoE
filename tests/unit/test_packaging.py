@@ -82,6 +82,14 @@ def test_model_artifacts_are_packaged_under_apmoe() -> None:
     assert "src/apmoe/weights/keystroke_constants.json" in artifacts
 
 
+def test_wheel_packages_include_remote_executors() -> None:
+    """The installable wheel should include demo remote executor modules."""
+    wheel = _pyproject()["tool"]["hatch"]["build"]["targets"]["wheel"]  # type: ignore[index]
+
+    assert "src/apmoe" in wheel["packages"]  # type: ignore[index]
+    assert "remote_executors" in wheel["packages"]  # type: ignore[index]
+
+
 def test_extension_entry_point_groups_are_declared() -> None:
     """Installed plugin packages can target stable APMoE entry-point groups."""
     project = _pyproject()["project"]  # type: ignore[index]

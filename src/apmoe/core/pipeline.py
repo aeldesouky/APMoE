@@ -484,6 +484,14 @@ class InferencePipeline:
             "policy": self.remote_fallback_policy,
             "reason": str(exc),
         }
+        print(
+            "[remote fallback] "
+            f"remote_expert={expert_name} "
+            f"fallback_expert={fallback_name} "
+            f"policy={self.remote_fallback_policy} "
+            f"reason={exc!s}",
+            flush=True,
+        )
         fallback_events.append(event)
         failed_experts[expert_name] = str(exc)
         metadata = {

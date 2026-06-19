@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "apmoe"
-version = "0.1.6"
+version = "0.1.7"
 description = "APMoE: Age Prediction using Mixture of Experts - an inference-only, IoC-based Python framework"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -108,7 +108,7 @@ artifacts = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/apmoe"]
+packages = ["src/apmoe", "remote_executors"]
 
 # ---------------------------------------------------------------------------
 # Ruff (linter + formatter)

@@ -614,7 +614,10 @@ class TestRemoteFallback:
         assert fallback.calls == 0
         assert prediction.metadata["fallback_experts"] == []
 
-    def test_transient_remote_failure_uses_local_fallback(self) -> None:
+    def test_transient_remote_failure_uses_local_fallback(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
         remote = _RemotePrimaryExpert(
             error=ExpertError("RemoteExpert timed out", context={"status_code": 503})
         )
@@ -630,6 +633,10 @@ class TestRemoteFallback:
         assert output.metadata["actual_expert_name"] == "local_fallback"
         assert prediction.metadata["fallback_experts"][0]["remote_expert"] == "remote_expert"
         assert "remote_expert" in prediction.metadata["failed_experts"]
+        stdout = capsys.readouterr().out
+        assert "[remote fallback]" in stdout
+        assert "remote_expert=remote_expert" in stdout
+        assert "fallback_expert=local_fallback" in stdout
 
     def test_disabled_fallback_preserves_fail_fast(self) -> None:
         remote = _RemotePrimaryExpert(

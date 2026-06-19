@@ -761,6 +761,8 @@ class RemoteExpert(ExpertPlugin):
         last_exc: Exception | None = None
         attempts = self._retry_policy.max_attempts
         for attempt in range(1, attempts + 1):
+            if attempt > 1:
+                self._print_retry_notice(attempt, attempts)
             try:
                 response = httpx.post(
                     self._endpoint,
@@ -791,6 +793,7 @@ class RemoteExpert(ExpertPlugin):
                             "attempts": attempt,
                         },
                     ) from exc
+                self._print_retry_failure(attempt, attempts, "timeout")
             except httpx.HTTPStatusError as exc:
                 status_code = exc.response.status_code
                 if status_code not in _TRANSIENT_STATUS_CODES:
@@ -835,6 +838,11 @@ class RemoteExpert(ExpertPlugin):
                             "attempts": attempt,
                         },
                     ) from exc
+                self._print_retry_failure(
+                    attempt,
+                    attempts,
+                    f"transient HTTP {status_code}",
+                )
             except httpx.RequestError as exc:
                 last_exc = exc
                 if not self._should_retry(attempt, attempts):
@@ -855,6 +863,7 @@ class RemoteExpert(ExpertPlugin):
                             "attempts": attempt,
                         },
                     ) from exc
+                self._print_retry_failure(attempt, attempts, "network error")
 
             self._sleep_before_retry(attempt)
 
@@ -885,7 +894,39 @@ class RemoteExpert(ExpertPlugin):
             if self._retry_policy.jitter
             else base_delay
         )
+        print(
+            "[remote backoff] "
+            f"expert={self._expert_name} "
+            f"sleep={delay:.3f}s "
+            f"before_attempt={failed_attempt + 1}",
+            flush=True,
+        )
         time.sleep(delay)
+
+    def _print_retry_failure(
+        self,
+        attempt: int,
+        attempts: int,
+        reason: str,
+    ) -> None:
+        """Print a retryable remote failure to stdout for demo visibility."""
+        print(
+            "[remote retry] "
+            f"expert={self._expert_name} "
+            f"attempt={attempt}/{attempts} "
+            f"failed={reason}; retrying",
+            flush=True,
+        )
+
+    def _print_retry_notice(self, attempt: int, attempts: int) -> None:
+        """Print the start of a retry attempt to stdout for demo visibility."""
+        print(
+            "[remote retry] "
+            f"expert={self._expert_name} "
+            f"attempt={attempt}/{attempts} "
+            "starting",
+            flush=True,
+        )
 
     def _parse_response(
         self, data: Any, consumed_modalities: list[str]

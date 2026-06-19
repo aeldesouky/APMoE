@@ -36,7 +36,7 @@ Before publishing a release:
    The tag must point at the commit that contains the matching package
    metadata.
 5. Create a GitHub release whose tag matches the package version, such as
-   `v0.1.0` for version `0.1.0`.
+   `v0.1.7` for version `0.1.7`.
 
 If the workflow reports a mismatch such as `Release tag 'vX.Y.Z' does not
 match package version 'X.Y.(Z-1)'`, the tag is pointing at an older commit.
@@ -56,5 +56,7 @@ python -m twine check .pytest-tmp-pypi-publish/*
 ```
 
 The `apmoe` wheel contains the packaged demo artifacts under `apmoe/weights`.
+It also contains the standalone demo remote executors under
+`remote_executors`, including `python -m remote_executors.keystroke_demo`.
 Users copy files into a project with `apmoe download-models` or provide their
 own configured artifact source.

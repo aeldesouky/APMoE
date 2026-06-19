@@ -75,6 +75,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install dist/apmoe-*.whl
           python -c "import apmoe; print(apmoe.__version__)"
+          python -m remote_executors.keystroke_demo --help
           python -c "from apmoe.core.models import download_model_artifacts; download_model_artifacts('.smoke-weights', install_model_package=False)"
           apmoe --help
 

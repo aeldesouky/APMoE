@@ -430,7 +430,10 @@ class TestRemoteExpertPredict:
             with pytest.raises(ExpertError, match="Content-Type"):
                 expert.predict({"keystroke": self._keystroke_input()})
 
-    def test_retries_timeout_then_succeeds(self) -> None:
+    def test_retries_timeout_then_succeeds(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
         import httpx
 
         expert = _loaded_expert(
@@ -457,6 +460,11 @@ class TestRemoteExpertPredict:
         assert output.predicted_age == pytest.approx(31.0)
         assert mock_post.call_count == 2
         sleep.assert_called_once()
+        stdout = capsys.readouterr().out
+        assert "[remote retry]" in stdout
+        assert "failed=timeout; retrying" in stdout
+        assert "[remote backoff]" in stdout
+        assert "attempt=2/2 starting" in stdout
 
     def test_retries_transient_http_status_then_succeeds(self) -> None:
         import httpx

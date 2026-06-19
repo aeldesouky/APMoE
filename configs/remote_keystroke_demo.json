@@ -1,0 +1,41 @@
+{
+  "apmoe": {
+    "modalities": [
+      {
+        "name": "keystroke",
+        "processor": "apmoe.modality.builtin.keystroke.KeystrokeProcessor",
+        "pipeline": {
+          "cleaner": "apmoe.processing.builtin.cleaners.KeystrokeCleaner",
+          "anonymizer": "apmoe.processing.builtin.anonymizers.KeystrokeAnonymizer"
+        }
+      }
+    ],
+    "experts": [
+      {
+        "name": "remote_keystroke_age_expert",
+        "class": "apmoe.experts.remote.RemoteExpert",
+        "modalities": ["keystroke"],
+        "endpoint": "http://127.0.0.1:8010/predict",
+        "endpoint_headers": {
+          "Content-Type": "application/json"
+        },
+        "endpoint_timeout": 10.0
+      }
+    ],
+    "aggregation": {
+      "strategy": "apmoe.aggregation.builtin.WeightedAverageAggregator"
+    },
+    "serving": {
+      "host": "0.0.0.0",
+      "port": 8000,
+      "workers": 1,
+      "cors_origins": ["*"],
+      "log_level": "info"
+    },
+    "security": {
+      "remote_enforce_https": false,
+      "remote_allow_private_networks": true
+    },
+    "confidence_threshold": 0.75
+  }
+}
