@@ -186,6 +186,45 @@ class TestInitCommand:
             actual_files = {path.name for path in project_dir.iterdir() if path.is_file()}
             assert expected_files.issubset(actual_files)
 
+    def test_extension_stubs_show_registry_decorators(self, tmp_path: Path) -> None:
+        """Custom component examples include registry imports and decorators."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "myproject"])
+            project_dir = Path("myproject")
+
+            expected_snippets = {
+                "custom_processor.py": [
+                    "from apmoe.modality.factory import modality_registry",
+                    '@modality_registry.register("my_custom_processor")',
+                ],
+                "custom_cleaner.py": [
+                    "from apmoe.processing.base import CleanerStrategy, cleaner_registry",
+                    '@cleaner_registry.register("my_custom_cleaner")',
+                ],
+                "custom_anonymizer.py": [
+                    "from apmoe.processing.base import AnonymizerStrategy, anonymizer_registry",
+                    '@anonymizer_registry.register("my_custom_anonymizer")',
+                ],
+                "custom_embedder.py": [
+                    "from apmoe.processing.base import EmbedderStrategy, embedder_registry",
+                    '@embedder_registry.register("my_custom_embedder")',
+                ],
+                "custom_expert.py": [
+                    "from apmoe.experts.registry import expert_registry",
+                    '@expert_registry.register("my_custom_expert")',
+                ],
+                "custom_aggregator.py": [
+                    "from apmoe.aggregation.base import AggregatorStrategy, aggregator_registry",
+                    '@aggregator_registry.register("my_custom_aggregator")',
+                ],
+            }
+
+            for filename, snippets in expected_snippets.items():
+                content = (project_dir / filename).read_text(encoding="utf-8")
+                for snippet in snippets:
+                    assert snippet in content
+
     def test_creates_weights_directory(self, tmp_path: Path) -> None:
         """A ``weights/`` subdirectory is created for pretrained files."""
         runner = CliRunner()

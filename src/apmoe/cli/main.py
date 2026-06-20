@@ -133,8 +133,10 @@ from __future__ import annotations
 # Example imports when you add your own processor:
 # from apmoe.core.types import ModalityData
 # from apmoe.modality.base import ModalityProcessor
+# from apmoe.modality.factory import modality_registry
 #
 #
+# @modality_registry.register("my_custom_processor")
 # class MyCustomProcessor(ModalityProcessor):
 #     @property
 #     def modality_name(self) -> str:
@@ -159,9 +161,10 @@ from __future__ import annotations
 
 # Example imports when you add your own cleaner:
 # from apmoe.core.types import ModalityData
-# from apmoe.processing.base import CleanerStrategy
+# from apmoe.processing.base import CleanerStrategy, cleaner_registry
 #
 #
+# @cleaner_registry.register("my_custom_cleaner")
 # class MyCustomCleaner(CleanerStrategy):
 #     def clean(self, data: ModalityData) -> ModalityData:
 #         return data
@@ -179,9 +182,10 @@ from __future__ import annotations
 
 # Example imports when you add your own anonymizer:
 # from apmoe.core.types import ModalityData
-# from apmoe.processing.base import AnonymizerStrategy
+# from apmoe.processing.base import AnonymizerStrategy, anonymizer_registry
 #
 #
+# @anonymizer_registry.register("my_custom_anonymizer")
 # class MyCustomAnonymizer(AnonymizerStrategy):
 #     def anonymize(self, data: ModalityData) -> ModalityData:
 #         return data
@@ -200,9 +204,10 @@ from __future__ import annotations
 # Example imports when you add your own embedder:
 # import numpy as np
 # from apmoe.core.types import EmbeddingResult, ModalityData
-# from apmoe.processing.base import EmbedderStrategy
+# from apmoe.processing.base import EmbedderStrategy, embedder_registry
 #
 #
+# @embedder_registry.register("my_custom_embedder")
 # class MyCustomEmbedder(EmbedderStrategy):
 #     def embed(self, data: ModalityData) -> EmbeddingResult:
 #         return EmbeddingResult(modality=data.modality, embedding=np.array([0.0]))
@@ -225,8 +230,10 @@ from __future__ import annotations
 
 # Example imports when you add your own expert:
 # from apmoe import ExpertOutput, ExpertPlugin, ProcessedInput
+# from apmoe.experts.registry import expert_registry
 #
 #
+# @expert_registry.register("my_custom_expert")
 # class MyCustomExpert(ExpertPlugin):
 #     @property
 #     def name(self) -> str:
@@ -253,10 +260,11 @@ Point the aggregation ``"strategy"`` entry in ``config.json`` at
 from __future__ import annotations
 
 # Example imports when you add your own aggregator:
-# from apmoe.aggregation.base import AggregatorStrategy
+# from apmoe.aggregation.base import AggregatorStrategy, aggregator_registry
 # from apmoe.core.types import ExpertOutput, Prediction
 #
 #
+# @aggregator_registry.register("my_custom_aggregator")
 # class MyCustomAggregator(AggregatorStrategy):
 #     def aggregate(self, outputs: list[ExpertOutput]) -> Prediction:
 #         output = outputs[0]

@@ -36,7 +36,7 @@ Before publishing a release:
    The tag must point at the commit that contains the matching package
    metadata.
 5. Create a GitHub release whose tag matches the package version, such as
-   `v0.1.7` for version `0.1.7`.
+   `v0.1.8` for version `0.1.8`.
 
 If the workflow reports a mismatch such as `Release tag 'vX.Y.Z' does not
 match package version 'X.Y.(Z-1)'`, the tag is pointing at an older commit.

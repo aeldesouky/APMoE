@@ -186,3 +186,5 @@ scratch/
 *.bak
 *.orig
 *.rej
+
+demo_custom_code.txt
