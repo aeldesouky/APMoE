@@ -19,7 +19,7 @@ These are the specific, implemented DX features that differentiate APMoE's integ
 - **Lifecycle observability hooks**: The `InferencePipeline` exposes hooks (`on_before_process`, `on_after_embed`, `on_after_expert`, `on_after_aggregate`) allowing integration teams to attach custom logging, metrics, or auditing without monkey-patching core code.
 - **Schema-level guardrails**: The Pydantic configuration layer enforces strict structural rules (e.g., ensuring all expert modalities are declared, unique names, valid bounds for thresholds), rejecting invalid states natively at boot.
 - **Multi-worker serving that just works**: `apmoe serve --workers N` correctly utilizes an ASGI factory app pattern, completely avoiding the broken state-sharing issues common in naive Python multi-process deployments.
-- **Remote expert endpoints**: Any expert can delegate inference to an external HTTP model server (HuggingFace Inference API, OpenAI-compatible endpoints, other APMoE instances, local LLMs, custom REST APIs) via a single `"endpoint"` config field — no weight file required. A fully customisable `request_template` (with `{{modalities.<name>}}` predict-time placeholder substitution) and `response_mapping` (dot-path extraction) allow adaptation to any remote API schema. `$ENV_VAR` substitution applies at bootstrap to the endpoint URL, all header values, and all literal string leaves in the request template — keeping every deployment-specific value (server URL, model name, system prompts, API keys) out of the config file entirely. A dedicated `apmoe.processing.llm` module provides `Base64ImageCleaner` and `PassthroughImageAnonymizer` for routing the image modality to vision-LLM endpoints without affecting the standard local-inference pipeline. See [`docs/remote_expert_endpoints.md`](./remote_expert_endpoints.md) for the full reference.
+- **Remote expert endpoints**: Any expert can delegate inference to an external HTTP model server (HuggingFace Inference API, OpenAI-compatible endpoints, other APMoE instances, local LLMs, custom REST APIs) via a single `"endpoint"` config field - no weight file required. A fully customisable `request_template` and `response_mapping` allow adaptation to remote API schemas. `$ENV_VAR` substitution keeps deployment-specific values out of the config file. See [remote expert configuration](configuration.md#remote-primary-with-local-fallback) for the full reference.
 
 ## 2. CLI Toolchain and Fast Feedback
 
@@ -87,8 +87,8 @@ APMoE's true power lies in its dependency injection architecture. Instead of har
    * **Anonymizers**: Mutate the payload to preserve privacy *before* inference (e.g., blurring faces).
    * **Embedders (Optional)**: Pre-compute vector embeddings for downstream models.
 3. **Experts (MoE)**: Isolated inference modules (`ExpertPlugin`). The developer specifies required modalities (e.g., `["keystroke"]`), and the framework automatically isolates the data and invokes each expert concurrently. Two execution modes are available:
-   * **Local experts** — load a pretrained weight file (`weights` field); inference runs in-process.
-   * **Remote experts** (`RemoteExpert`) — no weight file; inference is delegated to an external HTTP endpoint (`endpoint` field) with a fully customisable request/response schema. A two-pass substitution system separates deployment-time configuration (`$VAR` → expanded once at bootstrap from env) from per-request data injection (`{{modalities.<name>}}` → substituted on every predict call). The `apmoe.processing.llm` module provides LLM-compatible image processors that keep the standard local-inference pipeline untouched. See [`docs/remote_expert_endpoints.md`](./remote_expert_endpoints.md).
+   * **Local experts** load a pretrained weight file (`weights` field); inference runs in-process.
+   * **Remote experts** (`RemoteExpert`) use an HTTP endpoint (`endpoint` field) with configurable request and response mapping. See [remote expert configuration](configuration.md#remote-primary-with-local-fallback).
 4. **Aggregators**: Combine multiple `ExpertOutput` objects into a single final `Prediction`. The built-in `WeightedAverageAggregator` natively handles confidence/value arithmetic, but custom heuristic combiners can be easily plugged in.
 
 ## 6. Serving Middleware and Security Out-of-the-Box
@@ -112,12 +112,12 @@ See [`docs/dev/security.md`](./dev/security.md) for the full security reference 
 
 APMoE treats observability as a first-class citizen so that integrators have full visibility into the framework's operational health.
 
-**✅ Currently Implemented:**
+**âœ… Currently Implemented:**
 - **Structured Telemetry**: Every HTTP request emits a JSON-structured log with latency, HTTP status, and an auto-generated `X-Correlation-ID`.
 - **Pipeline Metrics**: The final prediction object tracks `pipeline_latency_s`, `skipped_experts`, and `failed_modalities`.
 - **Health & Readiness**: `GET /v1/health` dynamically queries `ExpertRegistry.health_check()`, returning `{"status": "healthy"}` only if all models are loaded in memory. If any fail, it gracefully returns a 503 degraded status.
 
-**🔄 In Progress:**
+**ðŸ”„ In Progress:**
 - **Full User-Facing Observability**: We are extending the framework to provide complete, zero-configuration observability suites natively for users. This will allow integrators to monitor system health, individual expert performance, and traffic analysis seamlessly.
 - **Prometheus Metrics Endpoint (`/metrics`)**: Currently, logs are localized to the uvicorn worker process. Once implemented, APMoE will expose a `/metrics` route allowing Grafana/Prometheus to natively scrape real-time error rates, RPS (requests per second), and latency percentiles.
 
@@ -125,25 +125,25 @@ APMoE treats observability as a first-class citizen so that integrators have ful
 
 While APMoE is an API framework, the "user" is the client application integrator. The UX is designed to be highly deterministic and actionable.
 
-**✅ Currently Implemented:**
+**âœ… Currently Implemented:**
 - **Actionable Fallbacks**: Instead of failing blindly, missing data results in partial predictions, returning exactly what succeeded and what failed.
 - **Proactive Guidance**: The Below-Threshold recommendation engine transforms low-confidence failures into clear, human-readable instructions.
 - **Consistent Response Shapes**: Errors always return a predictable `{"detail": "..."}` shape with appropriate HTTP status codes (422 for malformed payloads, 503 for unavailable experts).
 
 ## 9. Frictionless Setup & Documentation
 
-**✅ Currently Implemented:**
+**âœ… Currently Implemented:**
 - **Explicit Setup Documentation**: The root `README.md` provides explicit, copy-pasteable instructions for isolating Python 3.11+ environments, installing dependencies from source, and running the test suite.
 - **Zero-to-Serve Guide**: The documentation walks the developer linearly through scaffolding (`apmoe init --builtin`), validation (`apmoe validate`), and serving (`apmoe serve`).
 - **Localized Context**: In addition to the root documentation, `apmoe init` natively scaffolds a localized `README.md` tailored specifically to the newly generated project structure.
 
-**🔄 In Progress:**
+**ðŸ”„ In Progress:**
 - **PyPI Package Release**: We are preparing the package for public registry distribution. Soon, setup will be as completely frictionless as running `pip install apmoe` directly from PyPI, entirely bypassing the need to clone the repository manually.
 - **Docker Support**: Complete environment isolation is pending. We are actively finalizing a `Dockerfile` and `docker-compose.yml`. Once implemented, *any* user will be able to bypass Python setup entirely by simply running `docker compose up`.
 
 ## 10. Fine-Tuning (Integrator-Supplied Data)
 
-**🔄 In Progress**
+**ðŸ”„ In Progress**
 
 The architecture for integrator-led fine-tuning is fully designed, but the implementation is pending. 
 
@@ -167,7 +167,7 @@ different lifecycle points:
 
 | Syntax | When | Scope | Purpose |
 |---|---|---|---|
-| `$VARNAME` | Bootstrap (startup) | `endpoint`, header values, non-placeholder template leaves | Deployment config — server URL, model ID, system prompt, API keys |
+| `$VARNAME` | Bootstrap (startup) | `endpoint`, header values, non-placeholder template leaves | Deployment config â€” server URL, model ID, system prompt, API keys |
 | `{{modalities.<name>}}` | Per-request (predict) | `request_template` leaf strings | Live inference data for that call |
 
 This cleanly separates **what changes per deployment** from **what changes per
@@ -182,8 +182,8 @@ must never be used with local experts like `FaceAgeExpert`.
 
 | Class | Purpose |
 |---|---|
-| `Base64ImageCleaner` | Resizes image to 160 px max side, JPEG-compresses at quality 35, base64-encodes — produces ~1.3–2.5 KB / ~1900 tokens, fitting within a 4096-token context window |
-| `PassthroughImageAnonymizer` | No-op; satisfies the mandatory `Cleaner → Anonymizer` pipeline contract |
+| `Base64ImageCleaner` | Resizes image to 160 px max side, JPEG-compresses at quality 35, base64-encodes â€” produces ~1.3â€“2.5 KB / ~1900 tokens, fitting within a 4096-token context window |
+| `PassthroughImageAnonymizer` | No-op; satisfies the mandatory `Cleaner â†’ Anonymizer` pipeline contract |
 
 Both are registered in their respective registries and can be referenced by
 dotted path in any config:
@@ -199,7 +199,7 @@ dotted path in any config:
 
 Provider-specific `RemoteExpert` subclasses ship as first-class framework
 modules under `src/apmoe/experts/providers/`.  Developers reference them
-directly in config — no custom code needed.
+directly in config â€” no custom code needed.
 
 | Provider | Class | API |
 |---|---|---|
@@ -212,7 +212,7 @@ subclassing `RemoteExpert`, and registering with the canonical dotted path.
 ### Reference config and test script
 
 `configs/llm_remote.json` is a fully portable reference config with zero
-hardcoded values — every deployment-specific field is a `$VAR`, and the class
+hardcoded values â€” every deployment-specific field is a `$VAR`, and the class
 points at the built-in provider:
 
 ```json
@@ -235,7 +235,7 @@ latency on a MacBook (no GPU).
 ### Terminal commands
 
 ```bash
-# 1. Unit tests — LMStudioExpert only
+# 1. Unit tests â€” LMStudioExpert only
 .venv/bin/python -m pytest tests/unit/test_lmstudio_expert.py -v
 
 # 2. Full unit suite (regression check)
@@ -255,7 +255,7 @@ apmoe serve --config configs/llm_remote.json
 ### DX properties of the LLM integration
 
 - **Zero hardcoding**: all server addresses, model names, and prompts live in
-  environment variables — the same config file works across dev / staging / prod.
+  environment variables â€” the same config file works across dev / staging / prod.
 - **Pipeline isolation**: the LLM image processors live in a separate namespace
   (`apmoe.processing.llm`) so the standard `ImageCleaner` / `FaceAgeExpert`
   chain is completely unaffected.
@@ -263,7 +263,7 @@ apmoe serve --config configs/llm_remote.json
   `RemoteExpert` subclasses for popular providers; no custom code is required
   to use them, and adding a new one is a single-file contribution.
 - **Fail-fast secrets**: missing `$VAR` references raise `ExpertError` at
-  startup, not mid-request — the server never partially starts with a broken
+  startup, not mid-request â€” the server never partially starts with a broken
   remote configuration.
 - **Subclass-friendly**: `_build_request_body` and `_parse_response` are clean
   extension points; `$VAR` expansion is inherited automatically by subclasses
@@ -271,3 +271,4 @@ apmoe serve --config configs/llm_remote.json
 - **Tested**: 30 dedicated unit tests in `tests/unit/test_lmstudio_expert.py`
   cover class identity, registry key, all response-parsing paths, error cases,
   and the full mocked predict round-trip.
+

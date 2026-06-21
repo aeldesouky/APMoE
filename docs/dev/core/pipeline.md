@@ -1,333 +1,167 @@
 # Inference Pipeline (`apmoe.core.pipeline`)
 
-The `InferencePipeline` is the heart of the APMoE runtime. It owns the complete
-two-phase execution loop — from raw multi-modal input to a final
-`Prediction` — and is wired automatically by `APMoEApp.from_config()`.
+`InferencePipeline` owns the runtime path from raw multimodal input to the final `Prediction`. Most projects use it through `APMoEApp.from_config()`, but understanding the pipeline helps when writing extension points, debugging config, or testing components in isolation.
 
-You will not instantiate `InferencePipeline` directly in most projects. However,
-understanding it is essential for:
-
-- Writing custom hooks for observability or logging.
-- Testing components in isolation without the full app bootstrap.
-- Implementing advanced serving patterns (e.g. batching, streaming).
-
----
-
-## Key classes
+## Key Classes
 
 | Class | Role |
 |---|---|
-| `ModalityChain` | Bundles all processing components for a single modality |
-| `InferencePipeline` | Executes the two-phase inference loop |
+| `ModalityChain` | Bundles one modality processor plus cleaner, anonymizer, and optional embedder. |
+| `InferencePipeline` | Executes modality processing, expert dispatch, aggregation, and hooks. |
 
----
-
-## `ModalityChain`
-
-A `ModalityChain` is a plain dataclass that groups the four components of one
-modality's processing chain:
+## ModalityChain
 
 ```python
 from apmoe.core.pipeline import ModalityChain
 
 chain = ModalityChain(
-    processor=MyImageProcessor(),    # ModalityProcessor
-    cleaner=MyImageCleaner(),        # CleanerStrategy
-    anonymizer=MyImageAnonymizer(),  # AnonymizerStrategy
-    embedder=None,                   # EmbedderStrategy | None
+    processor=MyImageProcessor(),
+    cleaner=MyImageCleaner(),
+    anonymizer=MyImageAnonymizer(),
+    embedder=None,
 )
 ```
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `processor` | `ModalityProcessor` | ✅ | Validates and preprocesses raw input into `ModalityData`. |
-| `cleaner` | `CleanerStrategy` | ✅ | Cleans the `ModalityData` (denoising, normalisation, etc.). |
-| `anonymizer` | `AnonymizerStrategy` | ✅ | Removes PII from the cleaned `ModalityData`. |
-| `embedder` | `EmbedderStrategy \| None` | ❌ | Produces an `EmbeddingResult`. When `None`, the pipeline output for this modality is the preprocessed `ModalityData`. |
+| `processor` | `ModalityProcessor` | yes | Validates and preprocesses raw input into `ModalityData`. |
+| `cleaner` | `CleanerStrategy` | yes | Cleans the `ModalityData`. |
+| `anonymizer` | `AnonymizerStrategy` | yes | Removes or masks sensitive information. |
+| `embedder` | `EmbedderStrategy | None` | no | Produces an `EmbeddingResult`; when absent, the modality output remains `ModalityData`. |
 
-`APMoEApp.from_config()` constructs one `ModalityChain` per modality entry in
-config and passes the full dict to `InferencePipeline`.
-
----
-
-## `InferencePipeline`
+## Construction
 
 ```python
 from apmoe.core.pipeline import InferencePipeline
 
 pipeline = InferencePipeline(
-    chains={"visual": visual_chain, "audio": audio_chain},
+    chains={"image": image_chain, "keystroke": keystroke_chain},
     expert_registry=expert_reg,
     aggregator=my_aggregator,
 )
-prediction = pipeline.run({"visual": b"...", "audio": b"..."})
+
+prediction = pipeline.run({"image": image_bytes, "keystroke": keystroke_payload})
 ```
 
-### Constructor
+## Execution Flow
 
-| Parameter | Type | Description |
-|---|---|---|
-| `chains` | `dict[str, ModalityChain]` | Mapping of modality name → chain. |
-| `expert_registry` | `ExpertRegistry` | Live registry of expert instances with weights loaded. |
-| `aggregator` | `AggregatorStrategy` | Combines all expert outputs into a single `Prediction`. |
-| `on_before_process` | `list[callable]` | Hook list (see [Hooks](#hooks)). |
-| `on_after_embed` | `list[callable]` | Hook list. |
-| `on_after_expert` | `list[callable]` | Hook list. |
-| `on_after_aggregate` | `list[callable]` | Hook list. |
-
----
-
-## Execution flow
-
-```
-raw_inputs: dict[str, Any]
-        │
-        │  Phase A — Modality Processing (one branch per modality, parallel in async)
-        │
-        ├── "visual" branch ──► processor.validate()
-        │                   ──► processor.preprocess()   → ModalityData
-        │                   ──► cleaner.clean()          → ModalityData
-        │                   ──► anonymizer.anonymize()   → ModalityData
-        │                   ──► embedder.embed()         → EmbeddingResult  (if configured)
-        │                                                  ModalityData      (if no embedder)
-        │
-        ├── "audio" branch  ──► (same steps)
-        │
-        └── "eeg" branch    ──► (same steps)
-                │
-                │  Phase B — Expert Inference + Aggregation
-                │
-                │  processed: dict[str, ProcessedInput]
-                │
-                ├── Expert A (declares ["visual"])
-                │   receives {"visual": ProcessedInput}
-                │   returns  ExpertOutput(predicted_age, confidence)
-                │
-                ├── Expert B (declares ["audio"])
-                │   receives {"audio": ProcessedInput}
-                │   returns  ExpertOutput
-                │
-                ├── Expert C (declares ["visual", "audio"])
-                │   receives {"visual": ProcessedInput, "audio": ProcessedInput}
-                │   returns  ExpertOutput
-                │
-                ▼
-         aggregator.aggregate([ExpertOutput, ExpertOutput, ExpertOutput])
-                │
-                ▼
-           Prediction  (predicted_age, confidence, per_expert_outputs, skipped_experts, metadata)
+```text
+raw_inputs
+  -> for each configured modality present in the request:
+       processor.validate()
+       processor.preprocess()
+       cleaner.clean()
+       anonymizer.anonymize()
+       optional embedder.embed()
+  -> processed inputs keyed by modality name
+  -> runnable experts whose declared modalities are available
+  -> ExpertOutput records
+  -> aggregator.aggregate()
+  -> Prediction
 ```
 
----
+## Modality Processing
 
-## Phase A — Modality processing
+For each request key that matches a configured chain, the pipeline runs:
 
-For each key in `raw_inputs` that has a corresponding entry in `chains`, the
-pipeline runs the full processing chain:
+1. `processor.validate(raw_data)`
+2. `processor.preprocess(raw_data)`
+3. `cleaner.clean(ModalityData)`
+4. `anonymizer.anonymize(ModalityData)`
+5. `embedder.embed(ModalityData)` when configured
 
-1. `processor.validate(raw_data)` — returns `bool`. If `False` or if an exception
-   is raised, the modality is recorded in `Prediction.metadata["failed_modalities"]`
-   and excluded from the processed dict (graceful degradation, see below).
-2. `processor.preprocess(raw_data)` → `ModalityData`
-3. `cleaner.clean(ModalityData)` → `ModalityData`
-4. `anonymizer.anonymize(ModalityData)` → `ModalityData`
-5. *(optional)* `embedder.embed(ModalityData)` → `EmbeddingResult`
+Input keys for modalities not in `chains` are ignored so clients can pass a superset of values safely.
 
-Input keys for modalities **not** in `chains` are silently ignored. This allows
-callers to pass a superset of inputs without error.
+## Expert Inference
 
----
+After processing, the pipeline asks the expert registry for experts whose required modalities are available. Each runnable expert receives only its declared subset of inputs.
 
-## Phase B — Expert inference
+If no expert can run, the pipeline raises `PipelineError`. If a runnable expert raises, behavior depends on `expert_failure_policy`: `fail_fast` aborts the request, while `skip_failed` aggregates successful expert outputs and records failed experts in metadata.
 
-After Phase A, the pipeline holds `dict[str, ProcessedInput]` — a mapping of
-modality name to whatever the chain produced (an `EmbeddingResult` if an embedder
-was configured, or a `ModalityData` otherwise).
+## Graceful Degradation
 
-For each expert in the registry:
-
-1. `expert_registry.get_runnable_experts(available_modalities)` — returns only the
-   experts whose **entire** `declared_modalities()` list is present in the processed
-   dict.
-2. For each runnable expert: `expert.predict(inputs_subset)` where `inputs_subset`
-   is a dict containing only the modalities that expert declared.
-3. Each `ExpertOutput` is passed to the configured hooks.
-
-Experts whose required modalities are all absent or failed are listed in
-`Prediction.skipped_experts`.
-
-If **no expert** produces an output (all skipped), the pipeline raises
-`PipelineError` rather than calling the aggregator with an empty list.
-
----
-
-## Graceful degradation
-
-The pipeline is designed to produce **partial results** rather than fail completely
-when some modalities are unavailable:
-
-```
-Request contains: {"visual": ..., "audio": ...}  ← audio processing fails
-
-Processed dict:   {"visual": <ProcessedInput>}    ← only visual succeeded
-
-Runnable experts:  [VisualExpert]                  ← AudioExpert, MultiModalExpert skipped
-Skipped experts:   ["audio_expert", "multi_expert"]
-```
-
-The final `Prediction` includes:
+The pipeline can still return a prediction when one modality is missing or fails, as long as at least one expert can run.
 
 ```python
-prediction.skipped_experts           # ["audio_expert", "multi_expert"]
-prediction.metadata["failed_modalities"]  # {"audio": "Validation failed..."}
-prediction.metadata["available_modalities"]  # ["visual"]
+prediction = pipeline.run({"keystroke": keystroke_payload})
+print(prediction.skipped_experts)                  # e.g. ["face_age_expert"]
+print(prediction.metadata["available_modalities"]) # ["keystroke"]
 ```
 
-**Exceptions that cause a modality to be skipped:**
-
-- `processor.validate()` returns `False`.
-- `processor.validate()` raises any exception.
-- `cleaner.clean()`, `anonymizer.anonymize()`, or `embedder.embed()` raise any
-  exception (wrapped in `ModalityError` if not already one).
-
-**Expert exceptions are NOT silently degraded.** If `expert.predict()` raises, the
-pipeline re-raises (wrapped in `ExpertError`) and the request fails entirely. This
-is intentional: a broken expert is a code bug; a missing modality is a runtime
-condition.
-
----
+Modality failures are recorded in `Prediction.metadata["failed_modalities"]`.
 
 ## Hooks
 
-The pipeline exposes four hook lists. Add any number of callables; they fire in
-order for every call to `run()` or `run_async()`:
-
-```python
-# Log every modality as it starts processing
-pipeline.on_before_process.append(
-    lambda name, raw_data: logger.info("Processing %s", name)
-)
-
-# Record embedding dimensions in metrics
-pipeline.on_after_embed.append(
-    lambda name, result: metrics.gauge("embed_dim", result.embedding_dim
-                                       if hasattr(result, "embedding_dim") else 0)
-)
-
-# Trace each expert prediction
-pipeline.on_after_expert.append(
-    lambda output: logger.info("Expert %s: age=%.1f conf=%.2f",
-                               output.expert_name, output.predicted_age,
-                               output.confidence)
-)
-
-# Record final latency
-pipeline.on_after_aggregate.append(
-    lambda pred: metrics.histogram("pipeline_latency",
-                                   pred.metadata["pipeline_latency_s"])
-)
-```
-
-Hook signatures:
+The pipeline exposes four hook lists for logging or metrics:
 
 | Hook list | Signature | Fires when |
 |---|---|---|
-| `on_before_process` | `(modality_name: str, raw_data: Any) -> None` | Before each modality's chain starts |
-| `on_after_embed` | `(modality_name: str, result: ProcessedInput) -> None` | After each modality's chain finishes |
-| `on_after_expert` | `(output: ExpertOutput) -> None` | After each expert's `predict()` returns |
-| `on_after_aggregate` | `(prediction: Prediction) -> None` | After the aggregator returns |
-
-Hooks fire even during graceful degradation for the modalities that **did**
-succeed. They do not fire for failed/missing modalities.
-
----
-
-## Synchronous execution (`run`)
+| `on_before_process` | `(modality_name, raw_data)` | Before each modality chain starts. |
+| `on_after_embed` | `(modality_name, result)` | After each modality chain finishes. |
+| `on_after_expert` | `(output)` | After an expert returns. |
+| `on_after_aggregate` | `(prediction)` | After aggregation returns. |
 
 ```python
-prediction = pipeline.run({"visual": image_bytes, "audio": audio_bytes})
+pipeline.on_after_expert.append(
+    lambda output: logger.info("%s age=%.1f", output.expert_name, output.predicted_age)
+)
 ```
 
-Phase A processes modalities **sequentially** in iteration order of `raw_inputs`.
-Use this mode for single-threaded services or when individual processing steps
-already use multi-threading internally (e.g. PyTorch DataLoader workers).
-
----
-
-## Asynchronous execution (`run_async`)
+## Sync and Async Execution
 
 ```python
-prediction = await pipeline.run_async({"visual": image_bytes, "audio": audio_bytes})
+prediction = pipeline.run({"image": image_bytes})
+prediction = await pipeline.run_async({"image": image_bytes, "keystroke": keystroke_payload})
 ```
 
-Phase A runs each modality's chain concurrently using `asyncio.gather` and a
-thread-pool executor. Since processing chains are CPU-bound (not natively async),
-each chain runs in a separate thread. Use this in async web frameworks (FastAPI)
-to make full use of parallelism across modalities.
+`run_async()` processes modality chains concurrently through `asyncio.gather` and a thread-pool executor. Expert inference runs after modality processing completes.
 
-Phase B (expert inference) always runs sequentially after all Phase A tasks
-complete.
+## Prediction Metadata
 
----
-
-## `Prediction` metadata
-
-Both `run()` and `run_async()` enrich the `Prediction.metadata` dict with
-pipeline-level information:
+The pipeline adds framework metadata to the final prediction:
 
 | Key | Type | Description |
 |---|---|---|
-| `pipeline_latency_s` | `float` | Total wall-clock time from `run()` entry to `aggregate()` return, in seconds. |
-| `available_modalities` | `list[str]` | Sorted list of modalities that were successfully processed. |
-| `failed_modalities` | `dict[str, str]` | Modalities that failed during Phase A, mapped to their error message. |
+| `pipeline_latency_s` | `float` | Wall-clock pipeline latency. |
+| `available_modalities` | `list[str]` | Modalities that processed successfully. |
+| `failed_modalities` | `dict[str, str]` | Modality processing failures. |
+| `failed_experts` | `dict[str, str]` | Runnable expert failures when `expert_failure_policy="skip_failed"`. |
 
----
-
-## Direct usage (advanced)
-
-If you need to use the pipeline without `APMoEApp` (e.g. in a custom serving
-layer or test harness), wire it manually:
+## Direct Usage
 
 ```python
+from apmoe.aggregation.base import aggregator_registry
 from apmoe.core.pipeline import InferencePipeline, ModalityChain
 from apmoe.experts.registry import ExpertRegistry
-from apmoe.aggregation.base import aggregator_registry
 
-# Build chains
 chain = ModalityChain(
-    processor=MyProcessor(),
+    processor=MyImageProcessor(),
     cleaner=MyCleaner(),
     anonymizer=MyAnonymizer(),
-    embedder=MyEmbedder(),   # or None
+    embedder=None,
 )
 
-# Build expert registry
 registry = ExpertRegistry()
 expert = MyExpert()
 expert.load_weights("weights/my_expert.pt")
 registry.register_instance(expert)
 
-# Resolve aggregator
-agg = aggregator_registry.resolve("apmoe.aggregation.builtin.WeightedAverageAggregator")()
+agg = aggregator_registry.resolve("weighted_average")()
 
-# Wire pipeline
 pipeline = InferencePipeline(
-    chains={"visual": chain},
+    chains={"image": chain},
     expert_registry=registry,
     aggregator=agg,
 )
 
-# Run
-prediction = pipeline.run({"visual": image_bytes})
+prediction = pipeline.run({"image": image_bytes})
 ```
 
----
+## See Also
 
-## See also
-
-- [app.md](app.md) — `APMoEApp` wires the pipeline automatically from config
-- [../extension-points/modality-processor.md](../extension-points/modality-processor.md) — implementing a processor
-- [../extension-points/processing-strategies.md](../extension-points/processing-strategies.md) — implementing cleaner / anonymizer / embedder
-- [../extension-points/expert-plugin.md](../extension-points/expert-plugin.md) — implementing an expert
-- [../extension-points/aggregator.md](../extension-points/aggregator.md) — implementing an aggregator
-- [../testing.md](../testing.md) — how the pipeline is tested
+- [app.md](app.md)
+- [modality processor extension point](../extension-points/modality-processor.md)
+- [processing strategies](../extension-points/processing-strategies.md)
+- [expert plugins](../extension-points/expert-plugin.md)
+- [aggregators](../extension-points/aggregator.md)
+- [testing strategy](../testing.md)

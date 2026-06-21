@@ -1,57 +1,44 @@
 # Core Module (`apmoe.core`)
 
-The `core` package contains the framework internals. You will interact with
-these as a consumer (catching exceptions, reading `Prediction` objects,
-using the registry) but you generally do not subclass or modify them — that
-is what the [extension points](../extension-points/index.md) are for.
-
----
+The core package contains the framework primitives used by the CLI, serving layer, extension points, and application container.
 
 ## Modules
 
-| Module | Import path | Purpose |
-|---|---|---|
-| Types | `apmoe.core.types` | Pipeline data types shared by all components |
-| Exceptions | `apmoe.core.exceptions` | Framework exception hierarchy |
-| Registry | `apmoe.core.registry` | Generic component registry |
-| Config | `apmoe.core.config` | JSON config loader and Pydantic schema |
-| Pipeline | `apmoe.core.pipeline` | Inference pipeline orchestrator *(Phase 3)* |
-| App | `apmoe.core.app` | `APMoEApp` IoC container and lifecycle *(Phase 3)* |
+| Module | Purpose |
+|---|---|
+| `apmoe.core.types` | Shared dataclasses and type aliases used across the pipeline. |
+| `apmoe.core.exceptions` | Framework exception hierarchy. |
+| `apmoe.core.registry` | Generic registry and dotted-path resolution utilities. |
+| `apmoe.core.pipeline` | `InferencePipeline` and `ModalityChain`. |
+| `apmoe.core.app` | `APMoEApp` bootstrap lifecycle, prediction API, validation, and serving. |
+| `apmoe.core.config` | JSON configuration models and environment overrides. |
+| `apmoe.core.security` | Security helpers, audit events, redaction, endpoint policy, and integrity checks. |
 
----
+## Public Re-Exports
 
-## Public re-exports
-
-All core symbols are re-exported from the top-level `apmoe` package for
-convenience:
+Most application code should import public runtime types from `apmoe`:
 
 ```python
 from apmoe import (
-    # Types
-    ModalityData, EmbeddingResult, ProcessedInput,
-    ExpertOutput, Prediction,
-    # Exceptions
-    APMoEError, ConfigurationError, RegistryError,
-    PipelineError, ModalityError, ExpertError, ServingError,
-    # Registry
-    Registry,
-    # Config
-    load_config, FrameworkConfig,
-    # Pipeline (Phase 3)
-    InferencePipeline, ModalityChain,
-    # App (Phase 3)
     APMoEApp,
+    APMoEError,
+    ConfigurationError,
+    EmbeddingResult,
+    ExpertOutput,
+    InferencePipeline,
+    ModalityChain,
+    ModalityData,
+    Prediction,
+    ProcessedInput,
 )
 ```
 
----
+## See Also
 
-## See also
-
-- [types.md](types.md) — Full type reference
-- [exceptions.md](exceptions.md) — Exception hierarchy and handling guide
-- [registry.md](registry.md) — Registry usage reference
-- [pipeline.md](pipeline.md) — `InferencePipeline` and `ModalityChain` execution model
-- [app.md](app.md) — `APMoEApp` bootstrap lifecycle and inference API
-- [../configuration.md](../configuration.md) — Config file format reference
-- [../testing.md](../testing.md) — Testing strategy for all core modules
+- [types.md](types.md)
+- [exceptions.md](exceptions.md)
+- [registry.md](registry.md)
+- [pipeline.md](pipeline.md)
+- [app.md](app.md)
+- [configuration.md](../configuration.md)
+- [testing.md](../testing.md)

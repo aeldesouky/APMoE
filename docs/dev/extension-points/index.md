@@ -1,7 +1,7 @@
 # Extension Points
 
 APMoE is a framework, not a library. You extend it by subclassing abstract
-base classes (ABCs) and declaring them in config — the framework calls your
+base classes (ABCs) and declaring them in config â€” the framework calls your
 code; you never call the framework's orchestration logic directly.
 
 ---
@@ -10,21 +10,21 @@ code; you never call the framework's orchestration logic directly.
 
 ```
 You provide:                        Framework calls:
-────────────────────────────────    ──────────────────────────────────
-class MyProcessor(ModalityProcessor)  → processor.validate(raw)
-                                      → processor.preprocess(raw)
+â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€    â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+class MyProcessor(ModalityProcessor)  â†’ processor.validate(raw)
+                                      â†’ processor.preprocess(raw)
 
-class MyCleaner(CleanerStrategy)      → cleaner.clean(modality_data)
+class MyCleaner(CleanerStrategy)      â†’ cleaner.clean(modality_data)
 
-class MyAnonymizer(AnonymizerStrategy)→ anonymizer.anonymize(modality_data)
+class MyAnonymizer(AnonymizerStrategy)â†’ anonymizer.anonymize(modality_data)
 
-class MyEmbedder(EmbedderStrategy)    → embedder.embed(modality_data)
+class MyEmbedder(EmbedderStrategy)    â†’ embedder.embed(modality_data)
   (optional)
 
-class MyExpert(ExpertPlugin)          → expert.load_weights(path)   ← once
-                                      → expert.predict(inputs)      ← per request
+class MyExpert(ExpertPlugin)          â†’ expert.load_weights(path)   â† once
+                                      â†’ expert.predict(inputs)      â† per request
 
-class MyAggregator(AggregatorStrategy)→ aggregator.aggregate(outputs)
+class MyAggregator(AggregatorStrategy)â†’ aggregator.aggregate(outputs)
 ```
 
 You never instantiate these yourself. Register them in config; the framework
@@ -50,24 +50,24 @@ does the rest.
 Every component must be **importable** from the dotted path you put in config.
 There are two ways to make this work:
 
-### Option A — Dotted path (no explicit registration needed)
+### Option A â€” Dotted path (no explicit registration needed)
 
 ```json
-{ "processor": "myproject.processors.MyVisualProcessor" }
+{ "processor": "myproject.processors.MyImageProcessor" }
 ```
 
 The framework calls `importlib.import_module("myproject.processors")` and
-retrieves `MyVisualProcessor`. Your package just needs to be on `sys.path`
+retrieves `MyImageProcessor`. Your package just needs to be on `sys.path`
 (i.e. installed or in the working directory).
 
-### Option B — Registered short name
+### Option B â€” Registered short name
 
 ```python
 # myproject/processors.py
 from apmoe.modality.base import ModalityProcessor, modality_registry
 
 @modality_registry.register("my_image")
-class MyVisualProcessor(ModalityProcessor):
+class MyImageProcessor(ModalityProcessor):
     ...
 ```
 
@@ -122,14 +122,14 @@ For each modality, the framework calls the following in sequence:
 
 ```
 ModalityProcessor.preprocess(raw_input)
-        ↓
+        |
 CleanerStrategy.clean(ModalityData)
-        ↓
+        |
 AnonymizerStrategy.anonymize(ModalityData)
-        ↓
-EmbedderStrategy.embed(ModalityData)    ← only if pipeline.embedder is set
-        ↓
-ProcessedInput  →  dispatched to each expert that declared this modality
+        |
+EmbedderStrategy.embed(ModalityData)    <- only if pipeline.embedder is set
+        |
+ProcessedInput  ->  dispatched to each expert that declared this modality
 ```
 
 Each step produces a new object; the framework does **not** mutate inputs.
@@ -140,7 +140,7 @@ the same convention.
 
 ## Built-in implementations
 
-Phase 6 ships reference implementations for every extension point:
+The package ships reference implementations for the current built-in path:
 
 | Extension point | Built-in classes |
 |---|---|
@@ -150,3 +150,4 @@ Phase 6 ships reference implementations for every extension point:
 | `EmbedderStrategy` | Custom embedders via dotted paths or `apmoe.embedders` entry points |
 | `ExpertPlugin` | `FaceAgeExpert`, `KeystrokeAgeExpert`, `RemoteExpert`, `LMStudioExpert` |
 | `AggregatorStrategy` | `WeightedAverageAggregator`, `MedianAggregator`, `ConfidenceWeightedAggregator` |
+

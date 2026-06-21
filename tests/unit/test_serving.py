@@ -383,6 +383,34 @@ class TestInfoEndpoint:
         assert body["version"] == "0.1.0"
 
 
+class TestOpenAPISchema:
+    """Tests for generated OpenAPI metadata."""
+
+    def test_openapi_schema_documents_examples_and_headers(self, client: TestClient) -> None:
+        """OpenAPI includes current examples and response headers."""
+        schema = client.get("/openapi.json").json()
+
+        assert schema["paths"]["/v1/predict"]["post"]["summary"] == (
+            "Predict age from multimodal JSON"
+        )
+        examples = schema["paths"]["/v1/predict"]["post"]["requestBody"]["content"][
+            "application/json"
+        ]["examples"]
+        assert {"keystroke_triples", "keystroke_ikdd_string", "image_and_keystroke"}.issubset(
+            examples
+        )
+
+        response_headers = schema["paths"]["/v1/predict"]["post"]["responses"]["200"][
+            "headers"
+        ]
+        assert "X-Correlation-ID" in response_headers
+        assert "X-API-Version" in response_headers
+
+        legacy_headers = schema["paths"]["/predict"]["post"]["responses"]["200"]["headers"]
+        assert "Deprecation" in legacy_headers
+        assert "Sunset" in legacy_headers
+
+
 # ---------------------------------------------------------------------------
 # RequestLoggingMiddleware
 # ---------------------------------------------------------------------------

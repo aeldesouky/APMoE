@@ -1,229 +1,142 @@
 # APMoEApp (`apmoe.core.app`)
 
-`APMoEApp` is the **IoC container and lifecycle manager** for the entire framework.
-It reads your configuration file, resolves all component classes, loads pretrained
-weights, and exposes a clean API for inference and serving — without any glue code
-on your part.
+`APMoEApp` is the IoC container and lifecycle manager for the framework. It reads configuration, resolves component classes, loads pretrained weights, wires the inference pipeline, and exposes prediction, validation, metadata, and serving APIs.
 
 ```python
 from apmoe import APMoEApp
 
-app = APMoEApp.from_config("configs/my_project.json")
-prediction = app.predict({"visual": image_bytes, "audio": audio_bytes})
+app = APMoEApp.from_config("configs/multimodal.json")
+prediction = app.predict({"image": image_bytes, "keystroke": keystroke_payload})
 ```
-
----
 
 ## Responsibilities
 
 | Responsibility | Description |
 |---|---|
-| **Config loading** | Calls `load_config()`, validates JSON structure and cross-field constraints. |
-| **Component resolution** | Resolves every `processor`, `cleaner`, `anonymizer`, `embedder`, `expert.class`, and `aggregation.strategy` string to a Python class via registry lookup or dotted-path import. |
-| **Weight loading** | Calls `expert.load_weights(path)` once per expert at bootstrap time. |
-| **Pipeline wiring** | Assembles `ModalityChain` objects and passes them to `InferencePipeline`. |
-| **Inference** | Delegates `predict()` / `predict_async()` directly to `InferencePipeline.run()` / `run_async()`. |
-| **Validation** | Checks that all configured weight files still exist and that each expert's `health_check()` passes. |
-| **Serving** | Starts a FastAPI/uvicorn HTTP server *(Phase 4)*. |
-| **Metadata** | Returns a structured summary of the running app via `get_info()`. |
+| Config loading | Calls `load_config()` and validates JSON structure and cross-field rules. |
+| Component resolution | Resolves processors, cleaners, anonymizers, embedders, experts, and aggregators through registries or dotted imports. |
+| Weight loading | Calls `expert.load_weights(path)` once per local expert during bootstrap. |
+| Pipeline wiring | Builds `ModalityChain` objects and passes them to `InferencePipeline`. |
+| Inference | Delegates `predict()` and `predict_async()` to the pipeline. |
+| Validation | Checks configured weight files and expert health. |
+| Serving | Starts the FastAPI/uvicorn HTTP server. |
+| Metadata | Returns the running app summary through `get_info()`. |
 
----
+## Bootstrap Lifecycle
 
-## Bootstrap lifecycle (`from_config`)
+`APMoEApp.from_config(path)` performs these steps in order:
 
-```python
-app = APMoEApp.from_config("path/to/config.json")
-# or
-app = APMoEApp.from_config(Path("path/to/config.json"))
-```
+1. Load and validate the JSON config.
+2. Resolve and instantiate modality processors.
+3. Resolve and instantiate cleaner, anonymizer, and optional embedder strategies.
+4. Resolve and instantiate experts.
+5. Load local expert weights or configure remote endpoints.
+6. Resolve and instantiate the aggregation strategy.
+7. Assemble `InferencePipeline`.
+8. Store config and return a ready app instance.
 
-Bootstrap executes these steps **in order**. A failure at any step raises an
-appropriate exception and halts startup — the app never reaches a partially-valid
-state.
+A failure at any step raises an `APMoEError` subclass and startup stops before the app can serve partial state.
 
-```
-1. load_config(path)
-   └─ Reads JSON, applies APMOE_* env var overrides, validates with Pydantic.
-      Raises ConfigurationError on any schema or cross-field violation.
-
-2. Resolve modality processors
-   └─ For each modalities[] entry, call modality_registry.resolve(processor_str).
-      Raises RegistryError if the class cannot be found.
-
-3. Instantiate processors
-   └─ processor_cls() — default constructor. No weights loading here.
-
-4. Build ModalityChains
-   └─ For each modality, resolve and instantiate:
-        cleaner_registry.resolve(pipeline.cleaner)()
-        anonymizer_registry.resolve(pipeline.anonymizer)()
-        embedder_registry.resolve(pipeline.embedder)()  ← skipped if None
-      Raises RegistryError on unknown class; raises TypeError on bad constructor.
-
-5. Build ExpertRegistry
-   └─ For each experts[] entry:
-        a. expert_registry.resolve(expert.class)  → ExpertPlugin subclass
-        b. Instantiate: expert_cls(expert_config)
-        c. expert_instance.load_weights(expert.weights)
-      Raises ExpertError if load_weights() raises.
-      Raises RegistryError if the class cannot be found.
-
-6. Resolve aggregator
-   └─ aggregator_registry.resolve(aggregation.strategy)()
-      Raises RegistryError if unknown.
-
-7. Assemble InferencePipeline
-   └─ InferencePipeline(chains=..., expert_registry=..., aggregator=...)
-
-8. Store config and return APMoEApp instance
-```
-
-### Example — inspecting a freshly bootstrapped app
+## Prediction API
 
 ```python
-app = APMoEApp.from_config("configs/prod.json")
-
-info = app.get_info()
-print(info["modalities"])        # ["visual", "audio", "eeg"]
-print(info["experts"])           # ["face_expert", "audio_expert", "eeg_expert"]
-print(info["aggregator"])        # "WeightedAverageAggregator"
-print(info["framework_version"]) # "1.0.0"
-```
-
----
-
-## `predict` / `predict_async`
-
-```python
-# Synchronous
 prediction = app.predict(raw_inputs)
-
-# Asynchronous (use inside an async function / FastAPI route)
 prediction = await app.predict_async(raw_inputs)
 ```
 
-### `raw_inputs`
-
-A `dict[str, Any]` mapping modality name → raw data. Raw data is whatever your
-`ModalityProcessor.preprocess()` implementation accepts (typically `bytes`).
-
-You may pass **more** modalities than the app has registered — extra keys are
-silently ignored. You may pass **fewer** — missing modalities cause the affected
-experts to be skipped (graceful degradation; see
-[pipeline.md — Graceful degradation](pipeline.md#graceful-degradation)).
+`raw_inputs` is a `dict[str, Any]` keyed by modality name. For the current built-ins, common keys are `image` and `keystroke`.
 
 ```python
-# All three modalities
 prediction = app.predict({
-    "visual": image_bytes,
-    "audio":  audio_bytes,
-    "eeg":    eeg_bytes,
+    "image": image_bytes,
+    "keystroke": [[65, 0, 120], [65, 83, 80]],
 })
 
-# Audio and EEG unavailable — visual-only experts still run
-prediction = app.predict({"visual": image_bytes})
-print(prediction.skipped_experts)   # experts that need audio or eeg
+keystroke_only = app.predict({"keystroke": [[65, 0, 120]]})
+print(keystroke_only.skipped_experts)  # experts that required missing image data
 ```
 
-### `Prediction` result
+Extra unknown input keys are ignored. Missing modalities cause incompatible experts to be skipped when another expert can still run.
+
+## Prediction Result
 
 ```python
-prediction.predicted_age       # float — final age estimate
-prediction.confidence          # float — aggregator-provided confidence
-prediction.per_expert_outputs  # list[ExpertOutput] — individual expert results
-prediction.skipped_experts     # list[str] — experts skipped due to missing modalities
-prediction.metadata            # dict — pipeline latency, failed/available modalities
+prediction.predicted_age
+prediction.confidence
+prediction.per_expert_outputs
+prediction.skipped_experts
+prediction.metadata
 ```
 
-See [core/types.md](types.md) for the full `Prediction` type reference.
+See [types.md](types.md) for the full `Prediction` type reference.
 
----
-
-## `validate`
+## Validation
 
 ```python
 report = app.validate()
 ```
 
-Runs a **lightweight health check** without running inference. Returns a
-structured report dict. Raises `ConfigurationError` if the check fails hard
-(e.g. a required weight file no longer exists).
+`validate()` runs a lightweight health check without executing prediction. It is useful for CI, pre-start checks, and readiness probes.
+
+Example shape:
 
 ```python
 {
-    "status": "ok",           # "ok" | "degraded" | "error"
-    "modalities": ["visual", "audio"],
+    "status": "ok",
+    "modalities": ["image", "keystroke"],
     "experts": {
-        "face_expert":  {"status": "ok",  "weights_exist": True},
-        "audio_expert": {"status": "ok",  "weights_exist": True},
+        "face_age_expert": {"status": "ok", "weights_exist": True},
+        "keystroke_age_expert": {"status": "ok", "weights_exist": True},
     },
     "aggregator": "WeightedAverageAggregator",
 }
 ```
 
-Typical use cases:
-- Kubernetes liveness / readiness probes.
-- CI smoke tests that verify a config file + weights bundle is internally consistent.
-- Admin tooling that surfaces misconfiguration before an inference request fails.
-
----
-
-## `get_info`
+## Metadata
 
 ```python
 info = app.get_info()
 ```
 
-Returns a read-only metadata dict describing the running application. No
-I/O or computation is performed — all values are derived from the already-loaded
-config and instantiated components.
+Example shape:
 
 ```python
 {
-    "framework_version": "1.0.0",
-    "modalities":  ["visual", "audio", "eeg"],
-    "experts":     ["face_expert", "audio_expert", "eeg_expert"],
-    "aggregator":  "WeightedAverageAggregator",
-    "serving":     {"host": "0.0.0.0", "port": 8000, "workers": 4},
+    "framework_version": "0.1.8",
+    "modalities": ["image", "keystroke"],
+    "experts": ["face_age_expert", "keystroke_age_expert"],
+    "aggregator": "WeightedAverageAggregator",
+    "serving": {"host": "0.0.0.0", "port": 8000, "workers": 1},
 }
 ```
 
-Use this in the HTTP `/info` endpoint or to log a startup summary.
-
----
-
-## `serve`
+## Serving
 
 ```python
 app.serve()
 ```
 
-Starts the FastAPI/uvicorn HTTP server using the `serving` block from config.
-Exposes:
+The HTTP app exposes:
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/v1/predict` | POST | Submit raw inputs; returns a `Prediction` as JSON. |
-| `/v1/health` | GET | Expert readiness/liveness status, returning 200 or 503. |
-| `/v1/info` | GET | Returns `app.get_info()` as JSON. |
+| `/v1/predict` | POST | Submit raw inputs and receive a `Prediction`. |
+| `/v1/health` | GET | Expert readiness/liveness status. |
+| `/v1/info` | GET | Runtime metadata from `app.get_info()`. |
 
-Legacy `/predict`, `/health`, and `/info` aliases remain mounted with
-deprecation headers for compatibility.
+Legacy `/predict`, `/health`, and `/info` aliases remain mounted with deprecation headers for compatibility.
 
----
+## Error Handling
 
-## Error handling at bootstrap
+| Situation | Exception |
+|---|---|
+| Invalid JSON or schema violation | `ConfigurationError` |
+| Unknown processor, strategy, or expert path | `RegistryError` |
+| Local weight loading failure | `ExpertError` |
+| Weight file missing during validation | `ConfigurationError` |
+| Expert class does not subclass `ExpertPlugin` | `RegistryError` |
 
-| Situation | Exception | Message pattern |
-|---|---|---|
-| Invalid JSON / schema violation | `ConfigurationError` | `"Config validation failed: ..."` |
-| Unknown processor / strategy string | `RegistryError` | `"Cannot resolve 'my.Cls': not registered and not importable"` |
-| `load_weights()` raises | `ExpertError` | `"Expert 'face_expert' failed to load weights: ..."` |
-| Weight file path does not exist | `ExpertError` at bootstrap, `ConfigurationError` at `validate()` | — |
-| Expert class does not subclass `ExpertPlugin` | `RegistryError` | `"Resolved class 'Foo' is not a subclass of ExpertPlugin"` |
-
-All exceptions inherit from `APMoEError` so you can catch them with a single
-handler:
+All framework exceptions inherit from `APMoEError`:
 
 ```python
 from apmoe import APMoEApp, APMoEError
@@ -235,34 +148,18 @@ except APMoEError as exc:
     raise SystemExit(1)
 ```
 
----
+## Public Imports
 
-## Using `APMoEApp` from the public API
-
-All Phase 3 symbols are re-exported from the top-level `apmoe` package:
+The main runtime symbols are re-exported from the top-level package:
 
 ```python
 from apmoe import APMoEApp, InferencePipeline, ModalityChain
 ```
 
-You should **not** import directly from `apmoe.core.app` unless you are
-intentionally accessing internals.
+## See Also
 
----
-
-## `__repr__`
-
-```python
-str(app)
-# → "APMoEApp(modalities=['visual', 'audio'], experts=['face_expert', 'audio_expert'])"
-```
-
----
-
-## See also
-
-- [pipeline.md](pipeline.md) — `InferencePipeline` and `ModalityChain` — what the app wires together
-- [../configuration.md](../configuration.md) — full config file reference
-- [../testing.md](../testing.md) — how `APMoEApp` is tested (app integration tests)
-- [types.md](types.md) — `Prediction` and related types
-- [exceptions.md](exceptions.md) — full exception hierarchy
+- [pipeline.md](pipeline.md)
+- [types.md](types.md)
+- [exceptions.md](exceptions.md)
+- [configuration.md](../configuration.md)
+- [testing.md](../testing.md)

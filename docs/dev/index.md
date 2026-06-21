@@ -1,124 +1,98 @@
 # APMoE Developer Documentation
 
-APMoE is an **inference-only, Inversion-of-Control framework** for age prediction
-using a Mixture of Experts (MoE) architecture.
+APMoE is an inference-only, Inversion-of-Control framework for age prediction with a Mixture of Experts architecture. Application code supplies processors, cleaning/anonymization strategies, expert plugins, and aggregators; the framework owns configuration loading, pipeline orchestration, prediction, validation, and HTTP serving.
 
-> **Hollywood Principle:** *Don't call us, we'll call you.*
-> You extend abstract base classes and register your components.
-> The framework owns the execution lifecycle — it loads your weights,
-> wires the pipeline, and orchestrates every prediction.
+## How It Works
 
----
-
-## How it works
-
-```
-                         ┌─────────────────────────────────┐
-                         │  Your code (extension points)   │
-                         │                                 │
-                         │  MyVisualProcessor              │
-                         │  MyImageCleaner                 │
-                         │  MyAgeExpert                    │
-                         │  MyAggregator                   │
-                         └────────────┬────────────────────┘
-                                      │ register / subclass
-                         ┌────────────▼────────────────────┐
-                         │     APMoE Framework             │
-                         │                                 │
-                         │  loads config.json              │
-                         │  bootstraps pipeline            │
-                         │  runs inference                 │
-                         │  serves HTTP API                │
-                         └─────────────────────────────────┘
+```text
+Application code
+  -> defines or installs extension classes
+  -> config.json names those classes or entry points
+  -> APMoEApp resolves registries and loads weights
+  -> InferencePipeline runs modality chains
+  -> experts produce ExpertOutput records
+  -> aggregator returns a Prediction
 ```
 
-The framework reads your `config.json`, imports and instantiates every
-registered component, loads pretrained weights, and exposes a `/predict`
-endpoint — all without you writing any glue code.
+The current built-in demo path supports:
 
----
+- `image` through `ImageProcessor`, `ImageCleaner`, `ImageAnonymizer`, and `FaceAgeExpert`.
+- `keystroke` through `KeystrokeProcessor`, `KeystrokeCleaner`, `KeystrokeAnonymizer`, and `KeystrokeAgeExpert`.
+- Remote HTTP/LLM experts through `RemoteExpert` and `LMStudioExpert`.
 
-## Pipeline data flow
+## Pipeline Data Flow
 
-```
-Raw input (bytes / file)
-        │
-        ▼  ModalityProcessor.preprocess()
-  ModalityData
-        │
-        ▼  CleanerStrategy.clean()
-  ModalityData  (cleaned)
-        │
-        ▼  AnonymizerStrategy.anonymize()
-  ModalityData  (anonymised)
-        │
-        ▼  EmbedderStrategy.embed()   ← optional; omit to skip
-  EmbeddingResult  OR  ModalityData
-        │
-        │  ProcessedInput = EmbeddingResult | ModalityData
-        │
-        ├──► Expert A  ──► ExpertOutput (predicted_age, confidence)
-        ├──► Expert B  ──► ExpertOutput
-        └──► Expert C  ──► ExpertOutput
-                  │
-                  ▼  AggregatorStrategy.aggregate()
-              Prediction  (final answer)
+```text
+Raw request values
+  -> ModalityProcessor.preprocess()
+  -> CleanerStrategy.clean()
+  -> AnonymizerStrategy.anonymize()
+  -> optional EmbedderStrategy.embed()
+  -> ExpertPlugin.predict()
+  -> AggregatorStrategy.aggregate()
+  -> Prediction
 ```
 
----
+Experts receive only the modalities they declare. A single expert can consume one modality or multiple modalities, but the framework does not fuse all modality embeddings before expert inference.
 
-## Documentation map
+## Documentation Map
 
 | Document | What it covers |
 |---|---|
-| [../user_guide.md](../user_guide.md) | End-to-end user workflow: install, scaffold, extend, configure local/remote experts, fallback, Redis, serve |
-| [configuration.md](configuration.md) | Full JSON config reference and environment variable overrides |
-| [core/types.md](core/types.md) | Pipeline data types: `ModalityData`, `EmbeddingResult`, `ExpertOutput`, `Prediction` |
-| [core/exceptions.md](core/exceptions.md) | Exception hierarchy — when each error is raised and how to handle it |
-| [core/registry.md](core/registry.md) | `Registry[T]` — registering and resolving components |
-| [core/pipeline.md](core/pipeline.md) | `InferencePipeline` + `ModalityChain` — the two-phase execution loop *(Phase 3)* |
-| [core/app.md](core/app.md) | `APMoEApp` — IoC container, bootstrap lifecycle, inference API *(Phase 3)* |
-| [serving.md](serving.md) | FastAPI serving layer — routes, middleware order, auth and rate-limit behavior *(Phase 4)* |
-| [security.md](security.md) | Security controls — authn/authz, Redis stores, remote allowlists, model integrity, audit logs |
-| [security-summary.md](security-summary.md) | Audit-friendly summary of implemented security measures with code links |
-| [../deployment_sla_fallback.md](../deployment_sla_fallback.md) | Deployment choices, fallback design, SLA guidance, hot swapping, rollback, and autoscaling |
-| [../licensing.md](../licensing.md) | MIT licensing, dataset/model artifact boundaries, and redistribution checklist |
-| [cli.md](cli.md) | CLI reference — `init`, `serve`, `predict`, `validate`, exit/error behavior *(Phase 5)* |
-| [extension-points/index.md](extension-points/index.md) | Overview of every extension point and the IoC contract |
-| [extension-points/modality-processor.md](extension-points/modality-processor.md) | How to implement `ModalityProcessor` |
-| [extension-points/processing-strategies.md](extension-points/processing-strategies.md) | How to implement `CleanerStrategy`, `AnonymizerStrategy`, `EmbedderStrategy` |
-| [extension-points/expert-plugin.md](extension-points/expert-plugin.md) | How to implement `ExpertPlugin` |
-| [extension-points/aggregator.md](extension-points/aggregator.md) | How to implement `AggregatorStrategy` |
-| [testing.md](testing.md) | Testing strategy — unit, boundary, and integration test layers |
-| [publishing.md](publishing.md) | Maintainer release flow for GitHub Actions and PyPI Trusted Publishing |
-
----
+| [Documentation hub](../index.md) | Top-level navigation for all project docs |
+| [User guide](../getting-started/user-guide.md) | End-to-end application workflow: install, scaffold, configure, fallback, Redis, serve |
+| [Configuration reference](configuration.md) | JSON config schema, recipes, and environment overrides |
+| [CLI reference](cli.md) | `init`, `download-models`, `serve`, `predict`, `validate`, and exit behavior |
+| [Serving layer](serving.md) | FastAPI routes, middleware, auth, rate limiting, and versioned endpoints |
+| [OpenAPI reference](openapi.md) | Swagger UI, ReDoc, raw schema URL, examples, response models, and documented headers |
+| [Security reference](security.md) | Authn/authz, Redis stores, remote allowlists, model integrity, audit logs |
+| [Testing strategy](testing.md) | Unit, boundary, integration, resilience, and load-test coverage |
+| [Publishing guide](publishing.md) | Maintainer release flow for GitHub Actions and PyPI Trusted Publishing |
+| [Developer experience guide](developer-experience.md) | Extensibility, diagnostics, remote/LLM integration, and DX notes |
+| [Core types](core/types.md) | `ModalityData`, `EmbeddingResult`, `ExpertOutput`, and `Prediction` |
+| [Core pipeline](core/pipeline.md) | `InferencePipeline` and `ModalityChain` execution |
+| [Core app](core/app.md) | `APMoEApp` lifecycle, prediction API, validation, and serving |
+| [Core registry](core/registry.md) | Component registration and dotted-path resolution |
+| [Core exceptions](core/exceptions.md) | Error hierarchy and handling guidance |
+| [Extension points](extension-points/index.md) | All application-owned interfaces and registration options |
+| [Deployment guidance](../operations/deployment-sla-fallback.md) | Deployment profiles, fallback behavior, rollout, rollback, autoscaling, and SLA planning |
+| [Licensing](../operations/licensing.md) | MIT license, dataset/model boundaries, and redistribution checklist |
 
 ## Quickstart
 
-**1. Install**
+Install from PyPI:
 
 ```bash
-uv add apmoe
-# or
 pip install apmoe
 ```
 
-The default install includes serving, remote experts, security, Redis client
-integration, and ML runtimes. Model files are still acquired separately.
-
-Create a scaffold:
+Install for contributor work from this checkout:
 
 ```bash
-apmoe init my_app
+pip install -e ".[dev]"
+```
+
+Create and validate a scaffold:
+
+```bash
+apmoe init my_app --download-models
 cd my_app
 apmoe validate --config config.json
 ```
 
-For the full application-owner path, including remote experts, local fallback,
-and Redis-backed stores, start with [../user_guide.md](../user_guide.md).
+Serve the API:
 
-**2. Write a config file**
+```bash
+apmoe serve --config config.json
+# http://localhost:8000/v1/predict
+# http://localhost:8000/v1/health
+# http://localhost:8000/v1/info
+# http://localhost:8000/docs
+```
+
+For the full application-owner path, start with the [User guide](../getting-started/user-guide.md).
+
+## Minimal Config Example
 
 ```json
 {
@@ -126,18 +100,18 @@ and Redis-backed stores, start with [../user_guide.md](../user_guide.md).
     "modalities": [
       {
         "name": "image",
-        "processor": "myproject.processors.ImageProcessor",
+        "processor": "apmoe.modality.builtin.image.ImageProcessor",
         "pipeline": {
-          "cleaner":    "myproject.cleaners.ImageCleaner",
-          "anonymizer": "myproject.anonymizers.ImageAnonymizer"
+          "cleaner": "apmoe.processing.builtin.image_cleaners.ImageCleaner",
+          "anonymizer": "apmoe.processing.builtin.image_anonymizers.ImageAnonymizer"
         }
       }
     ],
     "experts": [
       {
-        "name":       "face_expert",
-        "class":      "myproject.experts.FaceExpert",
-        "weights":    "./weights/face.pt",
+        "name": "face_age_expert",
+        "class": "apmoe.experts.builtin.FaceAgeExpert",
+        "weights": "./weights/face_age_expert.keras",
         "modalities": ["image"]
       }
     ],
@@ -148,92 +122,9 @@ and Redis-backed stores, start with [../user_guide.md](../user_guide.md).
 }
 ```
 
-**3. Implement the extension points**
+## Key Design Constraints
 
-```python
-# myproject/processors.py
-from apmoe.modality.base import ModalityProcessor
-from apmoe.core.types import ModalityData
-
-class ImageProcessor(ModalityProcessor):
-    def validate(self, data: bytes) -> bool:
-        return len(data) > 0
-
-    def preprocess(self, data: bytes) -> ModalityData:
-        # decode, resize, normalise ...
-        return ModalityData(modality="image", data=tensor)
-```
-
-```python
-# myproject/experts.py
-from apmoe.experts.base import ExpertPlugin
-from apmoe.core.types import ProcessedInput, ExpertOutput
-
-class FaceExpert(ExpertPlugin):
-    @classmethod
-    def declared_modalities(cls) -> list[str]:
-        return ["image"]
-
-    def load_weights(self, path: str) -> None:
-        self.model = torch.load(path)
-
-    def predict(self, inputs: dict[str, ProcessedInput]) -> ExpertOutput:
-        age = float(self.model(inputs["image"].data))
-        return ExpertOutput("face_expert", ["image"], age, confidence=0.9)
-```
-
-**4. Bootstrap and predict**
-
-```python
-from apmoe import APMoEApp
-
-# One call wires the entire pipeline and loads all weights
-app = APMoEApp.from_config("config.json")
-
-# Run inference
-prediction = app.predict({"image": image_bytes})
-print(prediction.predicted_age)    # e.g. 34.2
-print(prediction.confidence)       # e.g. 0.87
-
-# Async variant (inside FastAPI / asyncio)
-prediction = await app.predict_async({"image": image_bytes})
-
-# Health check (weight files, expert liveness)
-report = app.validate()
-
-# Inspect what was loaded
-info = app.get_info()
-print(info["modalities"])  # ["image"]
-print(info["experts"])     # ["face_expert"]
-```
-
-**5. Serve over HTTP**
-
-```bash
-apmoe serve --config config.json
-# -> http://localhost:8000/v1/predict
-# -> http://localhost:8000/v1/health
-# -> http://localhost:8000/v1/info
-# -> http://localhost:8000/docs
-```
-
----
-
-## Key design constraints
-
-1. **No pre-prediction fusion.** There is no layer that merges all modality
-   embeddings into one representation before experts see them. Each expert
-   receives only the modalities it declares and predicts independently.
-
-2. **Experts are not restricted to a single modality.** An expert may declare
-   `["image"]`, `["keystroke"]`, or `["image", "keystroke"]`. Multi-modal experts
-   handle their own internal combination.
-
-3. **Embedding is optional per modality.** Omit `pipeline.embedder` in config
-   and your expert receives a `ModalityData` (preprocessed tensor). Include it
-   and your expert receives an `EmbeddingResult` (feature vector). This lets
-   experts that do their own feature extraction skip the embedding step.
-
-4. **Pretrained models only.** The framework loads and runs weights; it does
-   not train them. All `load_weights()` calls are one-time operations at
-   bootstrap.
+1. No pre-prediction fusion: each expert receives only the modalities it declares.
+2. Experts are not restricted to one modality; multi-modal experts combine their own inputs internally.
+3. Embedding is optional per modality; omit `pipeline.embedder` when an expert consumes preprocessed `ModalityData` directly.
+4. APMoE loads and runs pretrained artifacts; it does not train models.

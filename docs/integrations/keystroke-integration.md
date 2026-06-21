@@ -1,4 +1,4 @@
-# Keystroke Dynamics — Integration Guide
+# Keystroke Dynamics â€” Integration Guide
 
 This document is the complete reference for the keystroke age-prediction expert:
 how it works internally, what input formats it accepts, how to supply data
@@ -16,10 +16,10 @@ through the HTTP API, and how to wire it into the framework.
    3c. [JSON dict format](#3-json-dict-format)
 4. [Key Code Reference](#key-code-reference)
 5. [HTTP API Usage](#http-api-usage)
-   5a. [JSON body — cURL](#curl)
-   5b. [JSON body — Python requests](#python-requests)
-   5c. [JSON body — JavaScript fetch](#javascript-fetch)
-   5d. [JSON body — alternative value shapes](#json-body--alternative-value-shapes)
+   5a. [JSON body â€” cURL](#curl)
+   5b. [JSON body â€” Python requests](#python-requests)
+   5c. [JSON body â€” JavaScript fetch](#javascript-fetch)
+   5d. [JSON body â€” alternative value shapes](#json-body--alternative-value-shapes)
 6. [Programmatic Usage](#programmatic-usage)
 7. [Configuration](#configuration)
 8. [Response Format](#response-format)
@@ -32,33 +32,33 @@ through the HTTP API, and how to wire it into the framework.
 ## How It Works
 
 The keystroke expert predicts the **age group** of a user based on their
-typing dynamics — specifically how long they hold each key (*hold time*)
+typing dynamics â€” specifically how long they hold each key (*hold time*)
 and how fast they move between pairs of keys (*flight time*).
 
 ```
 Raw session data
-      │
-      ▼
-KeystrokeProcessor          parses IKDD / JSON → feature dict
-      │
-      ▼
-KeystrokeCleaner            removes timings ≤ 0 ms or > 10,000 ms
-      │
-      ▼
+      â”‚
+      â–¼
+KeystrokeProcessor          parses IKDD / JSON â†’ feature dict
+      â”‚
+      â–¼
+KeystrokeCleaner            removes timings â‰¤ 0 ms or > 10,000 ms
+      â”‚
+      â–¼
 KeystrokeAnonymizer         pass-through (timings have no direct PII)
-      │
-      ▼
-KeystrokeAgeExpert          builds 201-feature vector → ONNX SVM → age group
-      │
-      ▼
-WeightedAverageAggregator   combines experts (solo here) → final prediction
+      â”‚
+      â–¼
+KeystrokeAgeExpert          builds 201-feature vector â†’ ONNX SVM â†’ age group
+      â”‚
+      â–¼
+WeightedAverageAggregator   combines experts (solo here) â†’ final prediction
 ```
 
 **Model details**
 
 | Property | Value |
 |---|---|
-| Architecture | SVM Classifier (sklearn → ONNX) |
+| Architecture | SVM Classifier (sklearn â†’ ONNX) |
 | Input features | 201 (`dur_*` hold times + `dig_*_*` flight times) |
 | Output classes | `"18-25"`, `"26-35"`, `"36-45"`, `"46+"` |
 | Reported accuracy | 70 % |
@@ -72,9 +72,9 @@ All three files must be present **in the same directory** before the server star
 
 ```
 weights/
-  keystroke_age_expert.onnx      ← trained SVM model (ONNX format)
-  full_digraph_index.json        ← complete digraph vocabulary (6,539 pairs)
-  keystroke_constants.json       ← 201 feature names + training medians + labels
+  keystroke_age_expert.onnx      â† trained SVM model (ONNX format)
+  full_digraph_index.json        â† complete digraph vocabulary (6,539 pairs)
+  keystroke_constants.json       â† 201 feature names + training medians + labels
 ```
 
 `keystroke_constants.json` structure:
@@ -110,8 +110,8 @@ Plain-text format produced by keystroke logging tools.
 ```
 # Any line starting with '#' is a comment and is ignored
 # Format per data line:  key1-key2,timing1,timing2,...
-#   key2 == 0  →  hold time  (how long key1 was held down, in ms)
-#   key2 != 0  →  flight time (time from key1 release to key2 press, in ms)
+#   key2 == 0  â†’  hold time  (how long key1 was held down, in ms)
+#   key2 != 0  â†’  flight time (time from key1 release to key2 press, in ms)
 
 8-0,95.0,102.0,88.0
 13-0,100.0,97.0
@@ -124,8 +124,8 @@ Plain-text format produced by keystroke logging tools.
 
 **Rules:**
 - One entry per line: `key1-key2,v1,v2,...`
-- Multiple timing measurements for the same pair on the **same line** (comma-separated) — all are recorded and averaged
-- The same pair can also appear on **multiple lines** — all measurements are pooled
+- Multiple timing measurements for the same pair on the **same line** (comma-separated) â€” all are recorded and averaged
+- The same pair can also appear on **multiple lines** â€” all measurements are pooled
 - Lines starting with `#` are ignored; blank lines are ignored
 - Timings outside `(0, 10 000]` ms are discarded by the cleaner
 
@@ -160,8 +160,8 @@ Useful for APIs and programmatic generation.
 ```
 
 Each triple `[key1, key2, timing_ms]`:
-- `key1`, `key2` — integer key scan-codes (see [Key Code Reference](#key-code-reference))
-- `timing_ms` — timing measurement in milliseconds (float)
+- `key1`, `key2` â€” integer key scan-codes (see [Key Code Reference](#key-code-reference))
+- `timing_ms` â€” timing measurement in milliseconds (float)
 - When `key2 == 0`, this is a **hold time** for `key1`
 - When `key2 != 0`, this is a **flight time** from `key1` to `key2`
 
@@ -186,8 +186,8 @@ Useful when you compute feature names on the client side.
 ```
 
 Feature name convention:
-- `dur_{key}` — hold time for key with scan-code `key`
-- `dig_{key1}_{key2}` — flight time from key `key1` to key `key2`
+- `dur_{key}` â€” hold time for key with scan-code `key`
+- `dig_{key1}_{key2}` â€” flight time from key `key1` to key `key2`
 
 ---
 
@@ -207,8 +207,8 @@ Common keys relevant to typing tasks:
 | Alt | 18 | `dur_18` |
 | CapsLock | 20 | `dur_20` |
 | Space | 32 | `dur_32`, `dig_32_*`, `dig_*_32` |
-| A–Z | 65–90 | `dur_65`–`dur_90`, `dig_65_*`–`dig_90_*` |
-| 0–9 (number row) | 48–57 | `dur_48`–`dur_57` |
+| Aâ€“Z | 65â€“90 | `dur_65`â€“`dur_90`, `dig_65_*`â€“`dig_90_*` |
+| 0â€“9 (number row) | 48â€“57 | `dur_48`â€“`dur_57` |
 | Left arrow | 37 | `dur_37` |
 | Right arrow | 39 | `dur_39` |
 
@@ -329,7 +329,7 @@ const { data } = await axios.post("http://localhost:8000/v1/predict", {
 
 ---
 
-### JSON body — alternative value shapes
+### JSON body â€” alternative value shapes
 
 All three input formats from [Input Formats](#input-formats) work as the JSON
 value (the server auto-detects which one based on whether the value starts
@@ -451,7 +451,7 @@ print(result.predicted_age, result.confidence)
 }
 ```
 
-No embedder is configured for the `keystroke` modality — the expert receives
+No embedder is configured for the `keystroke` modality â€” the expert receives
 `ModalityData` directly and builds the feature vector internally.
 
 ---
@@ -513,24 +513,24 @@ A successful `POST /v1/predict` returns HTTP 200 with:
 For each of the **201 features** in `feature_cols` order:
 
 1. Collect every timing measurement for that `(key1, key2)` pair from the session
-2. Discard values `≤ 0 ms` or `> 10 000 ms` (cleaner step)
+2. Discard values `â‰¤ 0 ms` or `> 10 000 ms` (cleaner step)
 3. Compute the **mean** of remaining values
 4. If no valid measurement exists, substitute the **training-set median** from `feature_medians`
 5. Stack the 201 values into a `float32` vector and feed it to the ONNX model
 
-No z-score normalisation is applied — the ONNX model was exported with raw
+No z-score normalisation is applied â€” the ONNX model was exported with raw
 millisecond values (the SVM decision boundaries are in ms-space).
 
 ### Model output
 
 The SVM produces:
-- `output_label`: integer class index `0`–`3`
-- `output_probability`: `{0: p0, 1: p1, 2: p2, 3: p3}` — per-class probabilities
+- `output_label`: integer class index `0`â€“`3`
+- `output_probability`: `{0: p0, 1: p1, 2: p2, 3: p3}` â€” per-class probabilities
 
 The continuous age is computed as a probability-weighted average:
 
 ```
-predicted_age = p0 × 21.5 + p1 × 30.5 + p2 × 40.5 + p3 × 55.0
+predicted_age = p0 Ã— 21.5 + p1 Ã— 30.5 + p2 Ã— 40.5 + p3 Ã— 55.0
 ```
 
 ### Coverage
@@ -539,7 +539,7 @@ The `features_observed_fraction` field in the response tells you how much of
 the session's data the model actually saw. A session where only 5 % of the 201
 features were typed will rely heavily on medians and will be **less accurate**.
 
-For best accuracy, aim for sessions where the user types at least **200–500
+For best accuracy, aim for sessions where the user types at least **200â€“500
 keystrokes** covering a mix of common letter pairs and function keys.
 
 ---
@@ -650,18 +650,19 @@ steps are complete.
 
 The session is too short or the user typed very few of the 201 selected key
 pairs. More than ~80 % of features will be filled with medians, reducing
-accuracy. Ask users to type freely for at least 30–60 seconds before
+accuracy. Ask users to type freely for at least 30â€“60 seconds before
 submitting.
 
 ### All probabilities concentrate on one class
 
-This is normal for short sessions — the model defaults heavily toward the
+This is normal for short sessions â€” the model defaults heavily toward the
 most common training class when most features are unseen. Longer typing
 sessions distribute more probability mass across classes.
 
 ### Negative or extreme timing values in input
 
-Values `≤ 0 ms` and `> 10 000 ms` are automatically discarded by
+Values `â‰¤ 0 ms` and `> 10 000 ms` are automatically discarded by
 `KeystrokeCleaner`. If many values are being removed
 (`removed_timings` in cleaner metadata is high), check that your client is
 computing timings correctly (milliseconds, not seconds or microseconds).
+

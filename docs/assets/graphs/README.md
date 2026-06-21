@@ -23,3 +23,4 @@ available CPU PyTorch face model artifact for facial inference.
 These results are useful for thesis evaluation and prototype comparison, but
 they should not be treated as production SLA guarantees without repeating the
 tests on the final deployment hardware and runtime stack.
+

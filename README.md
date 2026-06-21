@@ -1,215 +1,175 @@
 # Age Prediction using Mixture of Experts (APMoE)
 
-Predicting age using anonymous biometric data with a Mixture of Experts (MoE) model. This project focuses on privacy-preserving age verification without the need for identifiable personal data, integrating advanced Human-Computer Interaction (HCI) implementations to ensure seamless user experience.
+APMoE is an inference-only Python framework for privacy-preserving age prediction using a configurable Mixture of Experts pipeline. The current project supports image and keystroke modalities, local model experts, remote HTTP/LLM experts, FastAPI serving, CLI workflows, security controls, Redis-backed operational stores, and deployment guidance.
 
-## Project Overview
+## Team Members
 
-Age verification is critical for protecting minors and ensuring compliance with legal regulations online. Current solutions often require sensitive personal identity documents, raising privacy and security concerns. APMoE offers a novel, privacy-respecting approach by estimating user age from non-identifiable data modalities such as facial images, voice samples, gait, EEG signals, and keystroke dynamics, processed through lightweight deep learning architectures. The project aims to balance accuracy, efficiency, and privacy protection, enabling scalable deployment across platforms and devices.
+Submitted by:
 
-The system uses ensemble modeling via a mixture of experts, combining predictions from multiple distinct data sources to improve robustness and reliability without compromising user anonymity.
+| Name | Student ID | Program |
+|---|---:|---|
+| Ahmed M. Eldesouky | 202201114 | DSAI |
+| Ahmed M. Abdelrahim | 202201983 | SWD/HCI |
+| Seif Eldin H. Khashaba | 202200973 | DSAI |
+| Mohamed A. Elnaggar | 202201974 | SWD/HCI |
+
+Supervisor: Dr. / Prof. ______________________
+
+## Problem Statement
+
+Online age verification often relies on identity documents or personal data that can expose users to privacy and security risk. APMoE addresses this by estimating age from non-identifying signals, currently facial image data and keystroke dynamics, then combining expert predictions into one result. The framework is built for research and prototype deployment where privacy, modularity, reproducibility, and operational safety matter.
 
 ## Features
 
-- Multi-modal age prediction using anonymized biometric and behavioral data
-- Lightweight deep learning models like MobileNet and EfficientNet for efficient processing
-- Ensemble modeling (Mixture of Experts) for enhanced accuracy
-- Evaluation of model fairness, latency, and usability
-- Focus on privacy adherence and ethical data handling
-- User-friendly verification interface with strong emphasis on data security
-- Deployment-ready APIs with containerization support
+- Config-driven Mixture of Experts inference pipeline.
+- Built-in image and keystroke modality processors.
+- Built-in `FaceAgeExpert` using Keras and `KeystrokeAgeExpert` using ONNX.
+- Weighted average, confidence-weighted, and median aggregation strategies.
+- Remote expert support for external HTTP model providers and local LLM endpoints.
+- Remote retry, circuit breaker, response-size limit, endpoint allowlist, and local fallback support.
+- FastAPI serving with versioned `/v1` endpoints, Swagger UI, CORS, auth, authorization, rate limiting, request IDs, and audit logs.
+- CLI commands for project scaffolding, model artifact acquisition, validation, prediction, and serving.
+- Redis-backed rate-limit and JWT invalidation stores with process-local fallback.
+- Unit, integration, end-to-end, resilience, and load-test scripts.
 
-## Data Sources
+## System Architecture
 
-Datasets are **not included** in this repository due to licensing restrictions but should be obtained separately from their original sources. The project uses the following datasets:
+APMoE loads a single JSON configuration, builds the requested modality pipelines, runs compatible experts, and aggregates their outputs into a final prediction.
 
-- Facial Age Dataset (Kaggle): https://www.kaggle.com/datasets/frabbisw/facial-age
-- MIMIC Electronic Health Records (EHR): https://mimic.physionet.org/
-- OU-ISR Gait Dataset: https://islab.ou.edu/datasets/
-- Mozilla Common Voice Speech Dataset: https://commonvoice.mozilla.org/en/datasets
-- IKDD Keystroke Dynamics Dataset: https://github.com/MachineLearningVisionRG/IKDD.git
-- TUH EEG Corpus: https://isip.piconepress.com/projects/nedc/html/tuh_eeg/
-
-## Installation
-
-APMoE requires **Python 3.11+**. The default package installs the framework,
-CLI, serving stack, local/remote expert runtimes, security features, Redis
-client integration, ML backends, and the built-in demo model artifact files.
-
-```bash
-pip install apmoe
+```text
+Client or CLI
+  -> FastAPI/CLI entry point
+  -> APMoEApp config bootstrap
+  -> modality processors
+  -> cleaner and anonymizer strategies
+  -> local or remote expert plugins
+  -> aggregation strategy
+  -> prediction response
 ```
 
-Optional extras:
+Architecture documentation:
 
-| Extra | Adds |
+- [Documentation index](docs/index.md)
+- [System architecture](docs/architecture/system-architecture.md)
+- [Dataflow design](docs/architecture/dataflow-design.md)
+- [Inference pipeline diagram](docs/architecture/inference-pipeline-diagram.md)
+- [Developer documentation](docs/dev/index.md)
+
+## Technologies Used
+
+| Area | Technologies |
 |---|---|
-| `models` | Backward-compatible alias; demo model artifacts are included in `apmoe` |
-| `serve`, `image`, `onnx`, `tensorflow`, `torch`, `remote`, `security`, `redis` | Backward-compatible aliases; these runtime dependencies are already included by default |
-| `dev` | Test, lint, type-check, build, and publishing tools |
+| Language and package | Python 3.11-3.12, Hatchling, uv, pip |
+| Backend and API | FastAPI, Uvicorn, Pydantic, python-multipart |
+| AI/ML frameworks | ONNX Runtime, TensorFlow/Keras, PyTorch, NumPy, Pillow |
+| Security | PyJWT, cryptography, signed remote manifests, audit logging |
+| Remote integrations | httpx, custom REST experts, LM Studio-compatible provider |
+| Database/cache | Redis for shared rate limiting and token invalidation |
+| DevOps and quality | pytest, pytest-asyncio, pytest-cov, ruff, mypy, twine, GitHub Actions |
 
-### From Source
+## Setup Instructions
 
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/aeldesouky/APMoE.git
-   cd APMoE
-   ```
+APMoE requires Python `>=3.11,<3.13`.
 
-2. **Create and activate a virtual environment**:
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-3. **Install the package in editable mode**:
-   ```bash
-   pip install -e ".[dev]"
-   ```
-
-4. **Verify the installation**:
-   ```bash
-   apmoe --help
-   ```
-
-## Usage
-
-APMoE is designed as a framework package: install it, create a project scaffold,
-then copy the bundled demo artifacts into the project or provide your own model
-files.
-
-For a full walkthrough that covers installation extras, project scaffolding,
-local extensions, package entry-point extensions, local and remote experts,
-remote-to-local fallback, Redis-backed stores, and serving, see
-[`docs/user_guide.md`](docs/user_guide.md).
-
-### 1. Scaffolding a Local Project
-Create a runnable configuration:
-```bash
-apmoe init my_app
-cd my_app
-```
-
-In an interactive terminal, `apmoe init` asks whether you want to acquire demo
-model artifacts immediately. For scripts, use `--download-models` or
-`--no-download-models` explicitly.
-
-To populate demo model artifacts for the built-in experts:
+1. Clone the repository.
 
 ```bash
-apmoe download-models --dest weights
+git clone https://github.com/aeldesouky/APMoE.git
+cd APMoE
 ```
 
-The command uses local configured sources first. If no local source is found,
-it copies the demo artifacts bundled in the installed `apmoe` package. If those
-resources are unavailable, it falls back to release-hosted artifact URLs and
-verifies the downloaded files.
+2. Create and activate a virtual environment.
 
-When running from a source checkout, `apmoe init my_app --builtin` uses the same
-model acquisition path and can copy local demo artifacts into the scaffold. The
-main `apmoe` wheel bundles the demo model files; set `APMOE_MODEL_SOURCE_DIR`
-only when you want to provide your own weights.
-
-The scaffold is local-only by default. When you run `apmoe validate`,
-`apmoe serve`, or `apmoe predict`, the CLI prints an expert summary showing
-whether each expert is `[local]`, `[remote]`, or `[local fallback]`.
-
-### 2. Validating the Configuration
-Before starting the server, ensure your configuration and weights are valid:
 ```bash
-apmoe validate --config config.json
+python -m venv .venv
+.venv\Scripts\activate
 ```
 
-### 3. Serving the API
-Start the high-performance ASGI inference server:
+On macOS/Linux:
+
 ```bash
-apmoe serve --config config.json --workers 1
+python3 -m venv .venv
+source .venv/bin/activate
 ```
-The server will bind to `127.0.0.1:8000`. You can interact with the live Swagger UI immediately at [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs).
 
-### 4. Running the Test Suite (Development)
-If you are developing or contributing to APMoE, ensure you run the comprehensive test suite:
+3. Install for development.
+
 ```bash
 pip install -e ".[dev]"
-pytest tests/ -v
 ```
 
-## Extending APMoE
+4. Verify the CLI.
 
-Local projects can keep using dotted import paths in `config.json`:
-
-```json
-{ "class": "myproject.experts.MyExpert" }
+```bash
+apmoe --help
 ```
 
-Installed extension packages can also expose components through Python entry
-points:
+5. Run tests.
 
-```toml
-[project.entry-points."apmoe.experts"]
-my_expert = "my_package.experts:MyExpert"
-
-[project.entry-points."apmoe.aggregators"]
-my_aggregator = "my_package.aggregation:MyAggregator"
+```bash
+pytest
 ```
 
-After installation, configs may use those short names:
+For the full walkthrough, see [User guide](docs/getting-started/user-guide.md) and [CLI reference](docs/dev/cli.md).
 
-```json
-{ "class": "my_expert" }
+## Deployment Instructions
+
+For local serving:
+
+```bash
+apmoe init my_app --download-models
+cd my_app
+apmoe validate --config config.json
+apmoe serve --config config.json --host 127.0.0.1 --port 8000
 ```
 
-Remote experts can be mixed with local experts by configuring `endpoint`
-instead of `weights`, and can name a standby local expert with
-`fallback_expert`. Redis-backed rate limiting and JWT invalidation are included
-in the default install. See
-[`docs/user_guide.md`](docs/user_guide.md) and
-[`docs/dev/configuration.md`](docs/dev/configuration.md) for complete examples.
+The API is available at:
 
-### API versioning
+- `POST http://127.0.0.1:8000/v1/predict`
+- `GET http://127.0.0.1:8000/v1/health`
+- `GET http://127.0.0.1:8000/v1/info`
+- Swagger UI: `http://127.0.0.1:8000/docs`
 
-The HTTP API is versioned under `/v1` (for example, `POST /v1/predict`).
-Legacy unversioned endpoints remain temporarily and return `Deprecation`
-and `Sunset` headers, plus `X-API-Version: 1`, to signal the migration
-window for clients.
+For production, package a validated config and immutable model artifacts, enable authentication/authorization, configure CORS, use Redis for shared rate limits and token invalidation, and place APMoE behind a TLS-terminating ingress or load balancer. See [Deployment, SLA, and fallback guidance](docs/operations/deployment-sla-fallback.md) and [Security reference](docs/dev/security.md).
 
-### Security
+## Usage Guide
 
-APMoE includes framework-level security controls for stateless JWT
-authentication, scope authorization, shared Redis-backed token invalidation and
-rate limiting with process-local fallback on Redis outages, remote expert
-endpoint allowlists, remote retries and circuit breakers, configurable
-prediction fallback, paired remote-to-local expert fallback, remote response limits, local SHA-256 model checks,
-RSA-signed remote model manifests, correlation IDs, auditable security logs,
-and secret redaction. See
-[`docs/dev/security.md`](docs/dev/security.md) for the full reference and
-production checklist.
+Run a local prediction from files:
 
-### Operations and deployment
+```bash
+apmoe predict --config config.json --input data/
+```
 
-Deployment trade-offs, Lambda-style serverless guidance, dedicated
-infrastructure guidance, fallback behavior, hot swapping, rollout/rollback,
-autoscaling, bandwidth estimates, and vendor SLA recommendations are documented
-in [`docs/deployment_sla_fallback.md`](docs/deployment_sla_fallback.md).
+Send a keystroke prediction request to the HTTP API:
 
-### Confidence scores
+```bash
+curl -X POST http://127.0.0.1:8000/v1/predict \
+  -H "Content-Type: application/json" \
+  -d "{\"keystroke\": [[65, 0, 120], [65, 83, 80]]}"
+```
 
-Per-expert outputs include a `confidence` field. Values are in **`[0.0, 1.0]`** when the model reports a meaningful score (for example, the keystroke ONNX classifier uses the maximum class probability). The bundled **face (Keras) regressor** does not produce a calibrated confidence: it reports **`-1.0`**, meaning *not applicable / not reported*. The aggregated prediction’s `confidence` remains in `[0.0, 1.0]`. See `docs/face_integration.md` and `docs/dev/core/types.md` for details.
+Detailed usage docs:
 
-## Ethical Considerations
+- [User guide](docs/getting-started/user-guide.md)
+- [Keystroke integration](docs/integrations/keystroke-integration.md)
+- [Face integration](docs/integrations/face-integration.md)
+- [Configuration reference](docs/dev/configuration.md)
+- [Serving layer](docs/dev/serving.md)
+- [OpenAPI reference](docs/dev/openapi.md)
 
-This project adheres strictly to data privacy laws and ethical guidelines. No personally identifiable information (PII) is stored, shared, or processed beyond anonymized signals. Predicted ages are used solely for research and prototype development, not for decisions impacting users without additional consent.
+## Screenshots / Demo
 
-## Citation
+The repository includes generated architecture and performance visuals:
 
-Please cite this project and datasets appropriately when using or referring to results.
+- [Performance dashboard](docs/assets/graphs/performance_dashboard.png)
+- [Throughput vs concurrency](docs/assets/graphs/throughput_vs_concurrency.png)
+- [P95 latency vs concurrency](docs/assets/graphs/p95_latency_vs_concurrency.png)
+- [Average latency vs concurrency](docs/assets/graphs/average_latency_vs_concurrency.png)
+- [Inference pipeline SVG](docs/assets/graphs/inference_pipeline.svg)
 
-***
+See [Performance testing graphs](docs/assets/graphs/README.md) for context.
 
 ## License
 
-APMoE is licensed under the MIT License. See [LICENSE](LICENSE) for the
-canonical license text and [`docs/licensing.md`](docs/licensing.md) for
-dataset, model artifact, and redistribution guidance.
+APMoE is licensed under the MIT License. See [LICENSE](LICENSE) and [Licensing information](docs/operations/licensing.md). Referenced datasets are not redistributed and remain governed by their original licenses.
 
-Datasets referenced by the project are not redistributed and remain governed by
-their original licenses.

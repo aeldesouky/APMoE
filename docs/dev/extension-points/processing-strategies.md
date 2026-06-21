@@ -4,19 +4,19 @@ The processing pipeline runs three strategies in sequence for each modality:
 
 ```
 ModalityData
-    │
-    ▼  CleanerStrategy.clean()       ← required
+    â”‚
+    â–¼  CleanerStrategy.clean()       â† required
 ModalityData  (cleaned)
-    │
-    ▼  AnonymizerStrategy.anonymize() ← required
+    â”‚
+    â–¼  AnonymizerStrategy.anonymize() â† required
 ModalityData  (anonymised)
-    │
-    ▼  EmbedderStrategy.embed()      ← optional (omit pipeline.embedder to skip)
+    â”‚
+    â–¼  EmbedderStrategy.embed()      â† optional (omit pipeline.embedder to skip)
 EmbeddingResult  OR  ModalityData    (ProcessedInput)
 ```
 
 Each strategy is independent, swappable per-modality via config, and must
-not mutate its input — use `ModalityData.with_data()` to produce a copy.
+not mutate its input â€” use `ModalityData.with_data()` to produce a copy.
 
 ---
 
@@ -60,9 +60,9 @@ from apmoe.processing.base import CleanerStrategy, cleaner_registry
 from apmoe.core.types import ModalityData
 
 
-@cleaner_registry.register("audio_cleaner")
-class AudioCleaner(CleanerStrategy):
-    """Trim silence and clip extreme amplitudes."""
+@cleaner_registry.register("custom_signal_cleaner")
+class CustomSignalCleaner(CleanerStrategy):
+    """Normalize a custom signal and clip extreme values."""
 
     CLIP_DB = 60.0
 
@@ -118,9 +118,9 @@ from apmoe.processing.base import AnonymizerStrategy, anonymizer_registry
 from apmoe.core.types import ModalityData
 
 
-@anonymizer_registry.register("voice_anonymizer")
-class VoiceAnonymizer(AnonymizerStrategy):
-    """Shift pitch slightly to obscure speaker identity."""
+@anonymizer_registry.register("custom_signal_anonymizer")
+class CustomSignalAnonymizer(AnonymizerStrategy):
+    """Remove identifying metadata from a custom signal."""
 
     SHIFT_SEMITONES = 2
 
@@ -143,7 +143,7 @@ class VoiceAnonymizer(AnonymizerStrategy):
 ```
 ABC:         apmoe.processing.base.EmbedderStrategy
 Registry:    apmoe.processing.base.embedder_registry
-Config key:  modalities[].pipeline.embedder   (optional — omit to skip)
+Config key:  modalities[].pipeline.embedder   (optional â€” omit to skip)
 ```
 
 The Embedder step is **optional**. When `pipeline.embedder` is absent from
@@ -193,7 +193,7 @@ class MobileNetEmbedder(EmbedderStrategy):
     def __init__(self) -> None:
         import torchvision.models as models
         backbone = models.mobilenet_v3_small(weights="IMAGENET1K_V1")
-        # Strip the classifier head — keep only the feature extractor
+        # Strip the classifier head â€” keep only the feature extractor
         self.model = torch.nn.Sequential(*list(backbone.children())[:-1])
         self.model.eval()
 
@@ -216,9 +216,9 @@ class MobileNetEmbedder(EmbedderStrategy):
 1. **Never mutate the input.** Always return a new `ModalityData` using
    `data.with_data(new_payload)` (for Cleaner and Anonymizer) or a new
    `EmbeddingResult` (for Embedder).
-2. **Raise `ModalityError`** (not bare exceptions) if the step fails — the
+2. **Raise `ModalityError`** (not bare exceptions) if the step fails â€” the
    framework catches and wraps, but explicit raises produce better context.
-3. **Preserve `metadata`** — `with_data()` does this automatically. If you
+3. **Preserve `metadata`** â€” `with_data()` does this automatically. If you
    add keys, add them to the copy's `metadata` dict, not the original's.
 4. **Keep it stateless** where possible. Strategies may hold pretrained model
    state (e.g. `MobileNetEmbedder`) but should not accumulate per-request
@@ -267,3 +267,4 @@ Each value is a dotted import path or a short registered name.
 APMoE does not require a built-in embedder. Omit `pipeline.embedder` when an
 expert consumes `ModalityData` directly, or provide a dotted path/entry point
 for a custom `EmbedderStrategy` when an expert expects an `EmbeddingResult`.
+

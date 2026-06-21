@@ -45,7 +45,7 @@ class ModalityProcessor(ABC):
         """Convert raw bytes into a ModalityData object.
 
         Only called when validate() returns True. This is the first
-        transformation step — decode, resize, resample, normalise, etc.
+        transformation step â€” decode, resize, resample, normalise, etc.
 
         Args:
             data: Raw bytes from the caller (e.g. HTTP JSON serialised to bytes, or CLI file reads).
@@ -98,7 +98,7 @@ class MyImageProcessor(ModalityProcessor):
         img = Image.open(io.BytesIO(data)).convert("RGB")
         img = img.resize(self.TARGET_SIZE)
         arr = (np.array(img, dtype=np.float32) / 255.0 - self.MEAN) / self.STD
-        tensor = arr.transpose(2, 0, 1)   # H×W×C → C×H×W
+        tensor = arr.transpose(2, 0, 1)   # HÃ—WÃ—C â†’ CÃ—HÃ—W
         return ModalityData(
             modality=self.modality_name,
             data=tensor,
@@ -121,24 +121,24 @@ class MyImageProcessor(ModalityProcessor):
 
 ## Responsibilities
 
-| Responsibility | ✅ Yours | ❌ Framework's |
+| Responsibility | âœ… Yours | âŒ Framework's |
 |---|---|---|
-| Decode the raw bytes | ✅ | |
-| Resize / resample / normalise | ✅ | |
-| Set `ModalityData.modality` correctly | ✅ | |
-| Call `clean()` on the result | | ❌ (framework) |
+| Decode the raw bytes | âœ… | |
+| Resize / resample / normalise | âœ… | |
+| Set `ModalityData.modality` correctly | âœ… | |
+| Call `clean()` on the result | | âŒ (framework) |
 | Load pretrained weights | *(none needed)* | |
 
 ---
 
 ## Contract rules
 
-1. `validate()` must be **fast and side-effect-free** — it may be called
+1. `validate()` must be **fast and side-effect-free** â€” it may be called
    without `preprocess()` following.
 2. `preprocess()` is only called after a `True` return from `validate()`.
 3. The `modality` field of the returned `ModalityData` must match the
    `name` declared in config for this processor entry.
-4. Do **not** run the Cleaner or Anonymizer inside `preprocess()` — that is
+4. Do **not** run the Cleaner or Anonymizer inside `preprocess()` â€” that is
    the framework's job.
 5. Raise `ModalityError` (not a bare exception) if preprocessing fails
    unrecoverably, so the framework can attach modality context.
@@ -170,3 +170,4 @@ previously passed to `@modality_registry.register(...)`. See
 |---|---|---|
 | `ImageProcessor` | `apmoe.modality.builtin.image.ImageProcessor` | `"image"` |
 | `KeystrokeProcessor` | `apmoe.modality.builtin.keystroke.KeystrokeProcessor` | `"keystroke"` |
+

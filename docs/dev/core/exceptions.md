@@ -15,13 +15,13 @@ Source:       src/apmoe/core/exceptions.py
 
 ```
 Exception
-└── APMoEError
-    ├── ConfigurationError
-    ├── RegistryError
-    ├── PipelineError
-    ├── ModalityError
-    ├── ExpertError
-    └── ServingError
+â””â”€â”€ APMoEError
+    â”œâ”€â”€ ConfigurationError
+    â”œâ”€â”€ RegistryError
+    â”œâ”€â”€ PipelineError
+    â”œâ”€â”€ ModalityError
+    â”œâ”€â”€ ExpertError
+    â””â”€â”€ ServingError
 ```
 
 ---
@@ -66,8 +66,8 @@ Raised by `load_config()` whenever the framework cannot produce a valid
 | File cannot be read | Permission denied |
 | Malformed JSON | Missing closing brace, trailing comma |
 | Schema validation failure | Missing required field, wrong type |
-| Duplicate modality or expert name | Two modalities with `"name": "visual"` |
-| Expert references undeclared modality | Expert declares `"eeg"` but no EEG modality configured |
+| Duplicate modality or expert name | Two modalities with `"name": "image"` |
+| Expert references undeclared modality | Expert declares `"voice"` but no matching custom modality is configured |
 | Environment variable type coercion failure | `APMOE_SERVING_PORT=abc` |
 
 **Handling:**
@@ -116,7 +116,7 @@ except RegistryError as exc:
 
 ## `PipelineError`
 
-Raised by the inference pipeline orchestrator (`InferencePipeline`, Phase 3)
+Raised by the inference pipeline orchestrator (`InferencePipeline`)
 when execution cannot complete.
 
 **When it is raised:**
@@ -137,7 +137,7 @@ Raised within a modality's processing branch.
 
 - `ModalityProcessor.validate()` returns `False` for the raw input.
 - A `CleanerStrategy`, `AnonymizerStrategy`, or `EmbedderStrategy` raises an
-  unhandled exception — the pipeline wraps it in `ModalityError` with the
+  unhandled exception â€” the pipeline wraps it in `ModalityError` with the
   modality name in `context`.
 
 **Context keys:** `modality`, `stage` (`"cleaner"` / `"anonymizer"` / `"embedder"`).
@@ -161,7 +161,7 @@ Raised within an expert plugin.
 **When it is raised:**
 
 - `load_weights()` cannot open or parse the weight file.
-- `predict()` raises an unhandled exception — wrapped with the expert name in
+- `predict()` raises an unhandled exception â€” wrapped with the expert name in
   `context`.
 - Required modality data is absent from the dispatch dict passed to `predict()`.
 
@@ -171,7 +171,7 @@ Raised within an expert plugin.
 
 ## `ServingError`
 
-Raised in the HTTP serving layer (`serving/`, Phase 4).
+Raised in the HTTP serving layer (`serving/`).
 
 **When it is raised:**
 
@@ -187,16 +187,17 @@ Raised in the HTTP serving layer (`serving/`, Phase 4).
 ```python
 from apmoe import APMoEError, ConfigurationError, ExpertError
 
-# Broad — catch any framework error
+# Broad â€” catch any framework error
 try:
     prediction = app.predict(inputs)
 except APMoEError as exc:
     log.error(exc)
 
-# Targeted — only handle expert failures, let others propagate
+# Targeted â€” only handle expert failures, let others propagate
 try:
     prediction = app.predict(inputs)
 except ExpertError as exc:
     log.warning("Expert %s failed, using fallback", exc.context.get("expert_name"))
     prediction = fallback_prediction()
 ```
+

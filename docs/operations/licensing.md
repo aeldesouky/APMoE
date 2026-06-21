@@ -122,7 +122,7 @@ For an APMoE vendor deployment, include these project-specific files or
 equivalents in the release artifact:
 
 - `LICENSE` for the MIT framework license;
-- `docs/licensing.md` or an adapted licensing notice;
+- `docs/operations/licensing.md` or an adapted licensing notice;
 - a model card for each configured expert in `config.json`;
 - checksums for every local `weights` artifact;
 - attribution or citation text required by training datasets;
@@ -139,3 +139,4 @@ metadata that should be confirmed by the project owners is:
   separate notices;
 - whether any institution, course, sponsor, or dataset attribution text must be
   included in a `NOTICE` or citation file.
+

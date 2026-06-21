@@ -121,3 +121,4 @@ The final state resolved by the Aggregator.
 At various boundaries in the dataflow, the **Security Audit Logger** intercepts the data asynchronously to monitor for violations:
 *   **Data Validation:** Drops inputs that are too large or malformed before Modality extraction.
 *   **Circuit Breaker State:** Monitors connection failures to external APIs during the Expert phase. If error rates exceed thresholds, it short-circuits the dataflow for that specific expert.
+

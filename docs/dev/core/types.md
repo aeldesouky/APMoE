@@ -1,95 +1,70 @@
 # Pipeline Types (`apmoe.core.types`)
 
-These dataclasses are the currency of the inference pipeline. Every component
-— processors, cleaners, anonymisers, embedders, experts, and aggregators —
-communicates by producing and consuming these types.
+These dataclasses are the shared contracts between processors, cleaners, anonymizers, embedders, experts, aggregators, the CLI, and the HTTP layer.
 
-```
-Import path:  apmoe.core.types
-Re-exported:  apmoe  (top-level package)
-Source:       src/apmoe/core/types.py
+```text
+Import path: apmoe.core.types
+Re-exported: apmoe
+Source: src/apmoe/core/types.py
 ```
 
----
+## Type Flow Summary
 
-## Type flow summary
-
+```text
+raw bytes / JSON value
+  -> ModalityProcessor
+  -> ModalityData
+  -> CleanerStrategy
+  -> AnonymizerStrategy
+  -> optional EmbedderStrategy
+  -> ModalityData or EmbeddingResult
+  -> ExpertPlugin.predict()
+  -> ExpertOutput
+  -> AggregatorStrategy.aggregate()
+  -> Prediction
 ```
-raw bytes / file
-      │
-      ▼ ModalityProcessor
-ModalityData           ← produced here, passed through Cleaner + Anonymizer
-      │
-      ▼ EmbedderStrategy  (optional)
-EmbeddingResult        ← produced when embedder is configured
-      │
-      │  either of the above ──► ProcessedInput (type alias)
-      │
-      ▼ ExpertPlugin.predict()
-ExpertOutput           ← one per expert
-      │
-      ▼ AggregatorStrategy.aggregate()
-Prediction             ← final result returned to the caller
-```
-
----
 
 ## `ModalityData`
 
 ```python
 @dataclass
 class ModalityData:
-    modality:  str
-    data:      Any
-    metadata:  dict[str, Any]   = field(default_factory=dict)
-    timestamp: float | None     = None
-    source:    str | None       = None
+    modality: str
+    data: Any
+    metadata: dict[str, Any] = field(default_factory=dict)
+    timestamp: float | None = None
+    source: str | None = None
 ```
 
-Wraps a single modality's payload at any point **before** (or without) the
-embedding step. The `data` field is opaque — its concrete type depends on
-the modality:
+`ModalityData` wraps one modality payload before, or instead of, embedding. The concrete `data` type depends on the processor.
 
-| Modality | Typical `data` type |
+| Modality | Typical built-in payload |
 |---|---|
-| `"visual"` | `torch.Tensor` (C×H×W) or `numpy.ndarray` |
-| `"audio"` | `numpy.ndarray` (samples,) or `torch.Tensor` |
-| `"eeg"` | `numpy.ndarray` (channels × time) |
+| `image` | Pillow/array/tensor-ready image data after validation and preprocessing. |
+| `keystroke` | Parsed timing features or normalized keystroke session data. |
+| custom modalities | Any type accepted by the matching expert. |
 
-### `with_data(new_data) → ModalityData`
+### `with_data(new_data) -> ModalityData`
 
-Returns a **copy** of the instance with `data` replaced. All metadata fields
-(`modality`, `metadata`, `timestamp`, `source`) are preserved. Use this in
-Cleaner and Anonymizer implementations to avoid mutating the input:
+Returns a copy with `data` replaced and metadata preserved.
 
 ```python
 def clean(self, data: ModalityData) -> ModalityData:
-    cleaned_tensor = my_cleaning_fn(data.data)
-    return data.with_data(cleaned_tensor)   # ✅ immutable style
+    return data.with_data(my_cleaning_fn(data.data))
 ```
-
----
 
 ## `EmbeddingResult`
 
 ```python
 @dataclass
 class EmbeddingResult:
-    modality:      str
-    embedding:     np.ndarray        # shape: (D,) or (N, D)
-    metadata:      dict[str, Any]    = field(default_factory=dict)
-    embedding_dim: int               = 0   # auto-inferred from embedding.shape[-1]
+    modality: str
+    embedding: np.ndarray
+    metadata: dict[str, Any] = field(default_factory=dict)
+    embedding_dim: int = 0
 ```
 
-Produced by `EmbedderStrategy.embed()`. Carries a dense numeric feature
-vector. `embedding_dim` is inferred automatically from `embedding.shape[-1]`
-when not supplied explicitly.
-
-> **Note:** Concrete embedders may store a `torch.Tensor` in `embedding`
-> instead of a `numpy.ndarray` — as long as the consuming expert handles it.
-> The type annotation is `np.ndarray` by convention; no runtime enforcement.
-
----
+Produced by `EmbedderStrategy.embed()`. `embedding_dim` is inferred from `embedding.shape[-1]` when not supplied.
 
 ## `ProcessedInput`
 
@@ -97,98 +72,69 @@ when not supplied explicitly.
 ProcessedInput = ModalityData | EmbeddingResult
 ```
 
-This is a **type alias**, not a class. It represents whatever exits a
-modality's processing chain:
-
-- `EmbeddingResult` when `pipeline.embedder` is configured for that modality.
-- `ModalityData` when no embedder is configured.
-
-Every expert's `predict()` method receives
-`dict[str, ProcessedInput]` — a mapping of modality name to its
-corresponding processed output.
-
-Use `isinstance` to branch on the concrete type inside an expert:
+Experts receive a mapping of modality name to processed input:
 
 ```python
 def predict(self, inputs: dict[str, ProcessedInput]) -> ExpertOutput:
-    inp = inputs["visual"]
-    if isinstance(inp, EmbeddingResult):
-        features = inp.embedding          # numpy array, skip CNN
-    else:
-        features = self.cnn(inp.data)     # run CNN on raw tensor
-    age = self.head(features).item()
-    return ExpertOutput(self.name, ["visual"], age, confidence=0.88)
+    image = inputs["image"]
+    # Branch on ModalityData vs EmbeddingResult when your expert supports both.
 ```
-
----
 
 ## `ExpertOutput`
 
 ```python
 @dataclass
 class ExpertOutput:
-    expert_name:          str
-    consumed_modalities:  list[str]
-    predicted_age:        float
-    confidence:           float           # [0.0, 1.0] or -1.0 = not reported
-    metadata:             dict[str, Any]  = field(default_factory=dict)
+    expert_name: str
+    consumed_modalities: list[str]
+    predicted_age: float
+    confidence: float
+    metadata: dict[str, Any] = field(default_factory=dict)
 ```
-
-Returned by `ExpertPlugin.predict()`. The `confidence` field is validated on
-construction: values in `[0.0, 1.0]`, or exactly `-1.0` meaning the expert
-does not report a score (e.g. a pure regressor). Any other value raises
-`ValueError`.
 
 | Field | Description |
 |---|---|
-| `expert_name` | Should match the `name` field in config; used by aggregators and in the `Prediction` breakdown. |
-| `consumed_modalities` | Which modalities this expert actually used (may be a subset of its declared modalities if some were optional and missing). |
-| `predicted_age` | Age estimate in years. No upper or lower bound is enforced. |
-| `confidence` | Self-reported certainty in `[0.0, 1.0]`, or `-1.0` if not reported. Built-in aggregators treat `-1` as “no score” when combining. `FaceAgeExpert` uses `-1` because the Keras regressor has no calibrated confidence. |
-| `metadata` | Optional key/value pairs for observability (inference latency, internal logits, model version, etc.). |
+| `expert_name` | Should match the configured expert instance name. |
+| `consumed_modalities` | Modalities used by the expert for this prediction. |
+| `predicted_age` | Age estimate in years. |
+| `confidence` | A score in `[0.0, 1.0]`, or `-1.0` when the expert does not report calibrated confidence. |
+| `metadata` | Optional observability details such as latency, model version, logits, or feature coverage. |
 
----
+`FaceAgeExpert` reports `-1.0` because its Keras regressor does not emit calibrated confidence. Aggregators treat `-1.0` as not reported.
 
 ## `Prediction`
 
 ```python
 @dataclass
 class Prediction:
-    predicted_age:        float
-    confidence:           float                         # [0.0, 1.0]
-    confidence_interval:  tuple[float, float] | None   = None
-    per_expert_outputs:   list[ExpertOutput]            = field(default_factory=list)
-    skipped_experts:      list[str]                     = field(default_factory=list)
-    metadata:             dict[str, Any]                = field(default_factory=dict)
+    predicted_age: float
+    confidence: float
+    confidence_interval: tuple[float, float] | None = None
+    per_expert_outputs: list[ExpertOutput] = field(default_factory=list)
+    skipped_experts: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 ```
 
-The final output of the inference pipeline, returned by
-`APMoEApp.predict()` and serialised to JSON by the `/predict` endpoint.
+The final output returned by `APMoEApp.predict()` and serialized by `POST /v1/predict`.
 
 | Field | Description |
 |---|---|
-| `predicted_age` | The framework's best age estimate (years). |
+| `predicted_age` | Aggregated age estimate in years. |
 | `confidence` | Aggregated confidence in `[0.0, 1.0]`. |
-| `confidence_interval` | Optional `(lower, upper)` bounds; lower must be ≤ upper. |
-| `per_expert_outputs` | Individual expert predictions — useful for debugging and explainability. |
-| `skipped_experts` | Names of experts that were not run (e.g. required modality missing from input). |
-| `metadata` | Framework-level metadata (pipeline version, total wall-clock latency, etc.). |
+| `confidence_interval` | Optional `(lower, upper)` bounds. |
+| `per_expert_outputs` | Individual expert results for debugging and explainability. |
+| `skipped_experts` | Experts not run because required modalities were unavailable. |
+| `metadata` | Pipeline latency, available modalities, failed modalities, failed experts, fallback metadata, and other framework details. |
 
-### Validation
+## Validation
 
-- `ExpertOutput.confidence` outside `[0.0, 1.0]` and not equal to `-1.0` raises `ValueError`.
-- `Prediction.confidence` (aggregated) remains in `[0.0, 1.0]`.
-- `confidence_interval` with `lower > upper` raises `ValueError`.
-- Equal bounds (`lower == upper`) are accepted (degenerate interval).
-
----
+- `ExpertOutput.confidence` must be in `[0.0, 1.0]` or exactly `-1.0`.
+- `Prediction.confidence` must remain in `[0.0, 1.0]`.
+- `confidence_interval` must have `lower <= upper`.
 
 ## Importing
 
 ```python
-# From the top-level package (recommended)
 from apmoe import ModalityData, EmbeddingResult, ProcessedInput, ExpertOutput, Prediction
-
-# Or directly from the module
 from apmoe.core.types import ModalityData, EmbeddingResult, ProcessedInput, ExpertOutput, Prediction
 ```

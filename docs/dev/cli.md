@@ -4,7 +4,7 @@ The APMoE CLI is the fastest way to scaffold projects, validate configuration,
 run local predictions, and start the HTTP service.
 
 For the end-to-end install and project workflow, see
-[`../user_guide.md`](../user_guide.md).
+[`../getting-started/user-guide.md`](../getting-started/user-guide.md).
 
 ---
 
@@ -176,3 +176,4 @@ load status, and exits non-zero on failure.
   subclasses and reported as user-facing messages.
 - Invalid CLI arguments or missing required options are handled by Click
   with a non-zero exit code.
+

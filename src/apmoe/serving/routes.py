@@ -26,6 +26,8 @@ from apmoe.core.types import Prediction
 from apmoe.serving.openapi_schemas import (
     HealthResponse,
     InfoResponse,
+    OPENAPI_COMMON_HEADERS,
+    OPENAPI_LEGACY_HEADERS,
     PredictionResponse,
     PredictRequestBody,
 )
@@ -120,6 +122,7 @@ def create_router(
         in a :class:`~fastapi.FastAPI` application.
     """
     router = APIRouter()
+    documented_headers = OPENAPI_LEGACY_HEADERS if deprecated else OPENAPI_COMMON_HEADERS
 
     # ------------------------------------------------------------------
     # POST /predict (mounted as /v1/predict and legacy /predict)
@@ -135,6 +138,10 @@ def create_router(
         ),
         tags=["Inference"],
         responses={
+            200: {
+                "description": "Prediction succeeded.",
+                "headers": documented_headers,
+            },
             422: {
                 "description": (
                     "Malformed JSON, or JSON value that cannot be parsed as an object "
@@ -197,8 +204,14 @@ def create_router(
         response_description='Overall `"healthy"` or `"degraded"` plus per-expert load status.',
         tags=["Operations"],
         responses={
-            200: {"description": "All experts loaded (or none registered)."},
-            503: {"description": "One or more experts failed to load weights."},
+            200: {
+                "description": "All experts loaded (or none registered).",
+                "headers": documented_headers,
+            },
+            503: {
+                "description": "One or more experts failed to load weights.",
+                "headers": documented_headers,
+            },
         },
         deprecated=deprecated,
     )
@@ -237,6 +250,12 @@ def create_router(
             "Version, experts, modalities, aggregator, and serving settings snapshot."
         ),
         tags=["Operations"],
+        responses={
+            200: {
+                "description": "Runtime metadata returned.",
+                "headers": documented_headers,
+            },
+        },
         deprecated=deprecated,
     )
     async def info(response: Response) -> dict[str, Any]:

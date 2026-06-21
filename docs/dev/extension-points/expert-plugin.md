@@ -36,7 +36,7 @@ class ExpertPlugin(ABC):
     def load_weights(self, path: str) -> None:
         """Load pretrained weights from the filesystem.
 
-        Called exactly once during APMoEApp bootstrap — never during
+        Called exactly once during APMoEApp bootstrap â€” never during
         inference. The framework resolves `path` from the config's
         `experts[].weights` field.
 
@@ -53,7 +53,7 @@ class ExpertPlugin(ABC):
         """Run inference and return a single age prediction.
 
         Args:
-            inputs: Dict mapping modality name → ProcessedInput for every
+            inputs: Dict mapping modality name â†’ ProcessedInput for every
                     modality in declared_modalities(). A ProcessedInput is
                     either a ModalityData (no embedder configured) or an
                     EmbeddingResult (embedder configured for that modality).
@@ -231,7 +231,7 @@ class CalibratedExpert(ExpertPlugin):
 
 ## Contract rules
 
-1. `declared_modalities()` is a **classmethod** — the framework may call it
+1. `declared_modalities()` is a **classmethod** â€” the framework may call it
    before instantiation to validate config.
 2. `load_weights()` is called **once** at bootstrap. Store the loaded model on
    `self`. Do not load weights in `predict()`.
@@ -270,7 +270,7 @@ class CalibratedExpert(ExpertPlugin):
 
 ## Graceful degradation
 
-If a modality is absent from the request (e.g. no audio uploaded), the
+If a modality is absent from the request (for example, no image payload was sent), the
 framework automatically skips every expert that lists that modality as
 required. The skipped expert names appear in `Prediction.skipped_experts`.
 
@@ -286,3 +286,4 @@ Expert outputs that arrive from available experts are still aggregated normally.
 | `KeystrokeAgeExpert` | `apmoe.experts.builtin.KeystrokeAgeExpert` | `["keystroke"]` |
 | `RemoteExpert` | `apmoe.experts.remote.RemoteExpert` | Configured per expert |
 | `LMStudioExpert` | `apmoe.experts.providers.lmstudio.LMStudioExpert` | Usually `["image"]` |
+

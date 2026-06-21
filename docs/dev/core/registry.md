@@ -42,7 +42,7 @@ from apmoe.experts.base import ExpertPlugin
 expert_registry: Registry[ExpertPlugin] = Registry("experts")
 ```
 
-The `name` argument is a human-readable label used in error messages only —
+The `name` argument is a human-readable label used in error messages only â€”
 it has no runtime effect on behaviour.
 
 ---
@@ -56,8 +56,8 @@ from apmoe.experts.base import ExpertPlugin
 from apmoe.experts.registry import expert_registry
 from apmoe.core.types import ProcessedInput, ExpertOutput
 
-@expert_registry.register("image_age_expert")
-class ImageAgeExpert(ExpertPlugin):
+@expert_registry.register("face_age_expert")
+class FaceAgeExpert(ExpertPlugin):
     ...
 ```
 
@@ -82,28 +82,28 @@ By default, re-registering the same key raises `RegistryError`. Pass
 `overwrite=True` to replace silently:
 
 ```python
-expert_registry.register_class("image_age_expert", ImprovedExpert, overwrite=True)
+expert_registry.register_class("face_age_expert", ImprovedExpert, overwrite=True)
 ```
 
 ---
 
 ## Looking up components
 
-### `get(key)` — by registered name
+### `get(key)` â€” by registered name
 
 ```python
-cls = expert_registry.get("image_age_expert")
+cls = expert_registry.get("face_age_expert")
 instance = cls()
 ```
 
 Raises `RegistryError` if the key is not found. The error message lists all
 available keys.
 
-### `resolve(name_or_path)` — by name or dotted import path
+### `resolve(name_or_path)` â€” by name or dotted import path
 
 ```python
 # Short registered name
-cls = expert_registry.resolve("image_age_expert")
+cls = expert_registry.resolve("face_age_expert")
 
 # Fully-qualified dotted path (imported on demand, no prior registration needed)
 cls = expert_registry.resolve("myproject.experts.CustomExpert")
@@ -116,7 +116,7 @@ Resolution order:
 3. If neither matches, raise `RegistryError`.
 
 This is how config file class paths like
-`"apmoe.experts.builtin.FaceAgeExpert"` are resolved at bootstrap — the
+`"apmoe.experts.builtin.FaceAgeExpert"` are resolved at bootstrap â€” the
 framework calls `registry.resolve(config_value)` for every component in the
 config.
 
@@ -127,13 +127,13 @@ config.
 ```python
 # All registered names, sorted alphabetically
 expert_registry.list_registered()
-# → ['face_age_expert', 'image_age_expert', 'keystroke_age_expert']
+# -> ['face_age_expert', 'keystroke_age_expert', 'remote']
 
 # Membership test
-"image_age_expert" in expert_registry # → True
+"face_age_expert" in expert_registry # -> True
 
 # Count
-len(expert_registry)                  # → 3
+len(expert_registry)                  # â†’ 3
 
 # Iterate (insertion order)
 for name in expert_registry:
@@ -161,7 +161,7 @@ except RegistryError as exc:
 
 The framework maintains one `Registry` instance per extension point. These
 are created in the respective base modules and should not be imported directly
-by application code — use the decorator on the base class instead (see the
+by application code â€” use the decorator on the base class instead (see the
 extension-point docs):
 
 | Registry | Extension point | Base class |
@@ -173,5 +173,6 @@ extension-point docs):
 | `expert_registry` | `apmoe.experts` | `ExpertPlugin` |
 | `aggregator_registry` | `apmoe.aggregation` | `AggregatorStrategy` |
 
-> These registries are populated by Phase 2 (extension-point abstractions) and
-> Phase 6 (built-in implementations).
+> These registries are populated by extension-point modules and built-in
+> implementations during import.
+

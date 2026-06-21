@@ -462,9 +462,10 @@ apmoe serve --config config.json --workers 2
 
 For the complete reference, see:
 
-- [CLI reference](dev/cli.md)
-- [Configuration reference](dev/configuration.md)
-- [Extension points](dev/extension-points/index.md)
-- [Remote expert endpoints](remote_expert_endpoints.md)
-- [Security reference](dev/security.md)
-- [Licensing and model artifact guidance](licensing.md)
+- [CLI reference](../dev/cli.md)
+- [Configuration reference](../dev/configuration.md)
+- [Extension points](../dev/extension-points/index.md)
+- [Remote expert endpoints](../dev/configuration.md#remote-primary-with-local-fallback)
+- [Security reference](../dev/security.md)
+- [Licensing and model artifact guidance](../operations/licensing.md)
+

@@ -201,7 +201,8 @@ FastAPI serves generated documentation automatically:
 | `/openapi.json` | Machine-readable OpenAPI schema. |
 
 The OpenAPI metadata lives in `apmoe.serving.openapi_schemas`. Update that
-module when route shapes or examples change.
+module when route shapes or examples change. See [OpenAPI reference](openapi.md)
+for the exported schema URLs, examples, response models, and documented headers.
 
 ---
 
@@ -426,3 +427,4 @@ Serving reads these fields:
 - `token_invalidation_key_prefix`
 
 Environment overrides are documented in [configuration.md](configuration.md).
+

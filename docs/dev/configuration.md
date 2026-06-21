@@ -31,7 +31,7 @@ sections such as `serving`, `environment`, `security`, and resilience settings:
 
 `modalities`, `experts`, and `aggregation` are **required**.  
 `serving`, `environment`, `security`, `expert_failure_policy`, `remote_retry`,
-and `remote_circuit_breaker` are **optional** — all their fields have defaults.
+and `remote_circuit_breaker` are **optional** â€” all their fields have defaults.
 
 ---
 
@@ -168,7 +168,7 @@ memory and emits audit events.
 
 ---
 
-## `modalities` — array, required
+## `modalities` â€” array, required
 
 Each entry defines one input modality and its three-step processing chain.
 Modality names must be **unique** across the list.
@@ -186,18 +186,18 @@ Modality names must be **unique** across the list.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `name` | string | ✅ | Canonical key for this modality (e.g. `"image"`, `"keystroke"`). Referenced by `experts[].modalities`. |
-| `processor` | string | ✅ | Dotted import path **or** registered name of a `ModalityProcessor` subclass. Responsible for validating and preprocessing raw input into a `ModalityData` object. |
-| `pipeline.cleaner` | string | ✅ | Dotted import path or registered name of a `CleanerStrategy` subclass. Runs first on the `ModalityData`. |
-| `pipeline.anonymizer` | string | ✅ | Dotted import path or registered name of an `AnonymizerStrategy` subclass. Runs after the cleaner. |
-| `pipeline.embedder` | string | ❌ | Dotted import path or registered name of an `EmbedderStrategy` subclass. **When omitted**, experts receive the preprocessed `ModalityData` directly (useful for experts that do their own feature extraction). **When present**, experts receive an `EmbeddingResult` (a dense feature vector). |
+| `name` | string | âœ… | Canonical key for this modality (e.g. `"image"`, `"keystroke"`). Referenced by `experts[].modalities`. |
+| `processor` | string | âœ… | Dotted import path **or** registered name of a `ModalityProcessor` subclass. Responsible for validating and preprocessing raw input into a `ModalityData` object. |
+| `pipeline.cleaner` | string | âœ… | Dotted import path or registered name of a `CleanerStrategy` subclass. Runs first on the `ModalityData`. |
+| `pipeline.anonymizer` | string | âœ… | Dotted import path or registered name of an `AnonymizerStrategy` subclass. Runs after the cleaner. |
+| `pipeline.embedder` | string | âŒ | Dotted import path or registered name of an `EmbedderStrategy` subclass. **When omitted**, experts receive the preprocessed `ModalityData` directly (useful for experts that do their own feature extraction). **When present**, experts receive an `EmbeddingResult` (a dense feature vector). |
 
 ### Resolving `processor` / `pipeline.*` values
 
 All four string fields accept either form:
 
-- **Registered name** — a short key previously passed to `@registry.register("name")`.
-- **Dotted import path** — a fully-qualified Python class path such as
+- **Registered name** â€” a short key previously passed to `@registry.register("name")`.
+- **Dotted import path** â€” a fully-qualified Python class path such as
   `"myproject.processors.MyVisualProcessor"`. The framework imports the module
   at startup and retrieves the attribute.
 
@@ -209,7 +209,7 @@ All four string fields accept either form:
 
 ---
 
-## `experts` — array, required
+## `experts` â€” array, required
 
 Each entry declares one expert plugin: which modalities it consumes, which
 pretrained weights to load, and which class implements it.
@@ -226,11 +226,12 @@ Expert names must be **unique** across the list.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `name` | string | ✅ | Unique identifier for this expert instance. Used as the key in aggregation `weights` maps and in per-expert breakdown output. |
-| `class` | string | ✅ | Dotted import path or registered name of an `ExpertPlugin` subclass. |
-| `weights` | string | ✅ | Filesystem path to the pretrained weight file (`.pt`, `.onnx`, etc.). Resolved relative to the current working directory. |
-| `modalities` | array of strings | ✅ | One or more modality names this expert consumes. Every name must appear in `modalities[].name`. An expert may consume a single modality **or** multiple (multi-modal expert). Must not be empty. |
-| *(any extra key)* | any | ❌ | Additional expert-specific parameters (e.g. `"threshold"`, `"temperature"`) are collected into an `extra` dict and passed to the expert at bootstrap. |
+| `name` | string | âœ… | Unique identifier for this expert instance. Used as the key in aggregation `weights` maps and in per-expert breakdown output. |
+| `class` | string | âœ… | Dotted import path or registered name of an `ExpertPlugin` subclass. |
+| `weights` | string | local experts | Filesystem path to the pretrained weight file (`.keras`, `.onnx`, `.pt`, etc.). Resolved relative to the current working directory. |
+| `endpoint` | string | remote experts | HTTP endpoint used by `RemoteExpert`/provider experts instead of a local weight file. |
+| `modalities` | array of strings | âœ… | One or more modality names this expert consumes. Every name must appear in `modalities[].name`. An expert may consume a single modality **or** multiple (multi-modal expert). Must not be empty. |
+| *(any extra key)* | any | âŒ | Additional expert-specific parameters (e.g. `"threshold"`, `"temperature"`) are collected into an `extra` dict and passed to the expert at bootstrap. |
 
 Local experts use `weights`; remote experts use `endpoint`. The two fields are
 mutually exclusive. Remote experts may set `fallback_expert` to name a standby
@@ -354,7 +355,7 @@ pipeline.
 
 ---
 
-## `aggregation` — object, required
+## `aggregation` â€” object, required
 
 Defines how individual expert predictions are combined into a single final answer.
 
@@ -370,19 +371,17 @@ Defines how individual expert predictions are combined into a single final answe
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `strategy` | string | ✅ | Dotted import path or registered name of an `AggregatorStrategy` subclass. |
-| `weights` | object | ❌ | Expert-name → numeric weight map. Used by `WeightedAverageAggregator`. Weights do **not** need to sum to 1 — they are normalised internally. |
-| `weights_path` | string | ❌ | Path to a pretrained combiner model file. Used by `LearnedCombiner`. |
-| *(any extra key)* | any | ❌ | Additional strategy-specific parameters collected into `extra`. |
+| `strategy` | string | âœ… | Dotted import path or registered name of an `AggregatorStrategy` subclass. |
+| `weights` | object | âŒ | Expert-name â†’ numeric weight map. Used by `WeightedAverageAggregator`. Weights do **not** need to sum to 1 â€” they are normalised internally. |
+| *(any extra key)* | any | âŒ | Additional strategy-specific parameters collected into `extra`. |
 
-### Built-in strategies (Phase 6)
+### Built-in strategies
 
 | Class path | Description |
 |---|---|
 | `apmoe.aggregation.builtin.WeightedAverageAggregator` | Weighted average of predicted ages; weights from `aggregation.weights` (falls back to uniform if omitted). |
 | `apmoe.aggregation.builtin.MedianAggregator` | Median of predicted ages; ignores confidence. |
 | `apmoe.aggregation.builtin.ConfidenceWeightedAggregator` | Weighted average where each expert's weight equals its self-reported confidence. |
-| `apmoe.aggregation.builtin.LearnedCombiner` | Small pretrained model that takes expert predictions + confidences as input. Requires `weights_path`. |
 
 ---
 
@@ -440,7 +439,7 @@ Circuit breakers are process-local and per remote expert instance:
 
 ---
 
-## `serving` — object, optional
+## `serving` â€” object, optional
 
 Controls the FastAPI/uvicorn HTTP serving layer. The entire block may be
 omitted; all fields have defaults.
@@ -466,11 +465,11 @@ omitted; all fields have defaults.
 
 | Field | Type | Default | Constraints | Description |
 |---|---|---|---|---|
-| `host` | string | `"0.0.0.0"` | — | Network interface for uvicorn to bind to. Use `"127.0.0.1"` to restrict to localhost. |
-| `port` | integer | `8000` | 1 – 65535 | TCP port number. |
-| `workers` | integer | `4` | ≥ 1 | Number of uvicorn worker processes. |
-| `cors_origins` | array of strings | `["*"]` | — | Allowed CORS origin patterns. Use `["*"]` to permit all origins, or list explicit origins like `["https://myapp.com"]`. |
-| `rate_limit` | integer \| null | `null` | ≥ 1 | Maximum requests per minute per client IP. `null` disables rate limiting entirely. |
+| `host` | string | `"0.0.0.0"` | â€” | Network interface for uvicorn to bind to. Use `"127.0.0.1"` to restrict to localhost. |
+| `port` | integer | `8000` | 1 â€“ 65535 | TCP port number. |
+| `workers` | integer | `4` | â‰¥ 1 | Number of uvicorn worker processes. |
+| `cors_origins` | array of strings | `["*"]` | â€” | Allowed CORS origin patterns. Use `["*"]` to permit all origins, or list explicit origins like `["https://myapp.com"]`. |
+| `rate_limit` | integer \| null | `null` | â‰¥ 1 | Maximum requests per minute per client IP. `null` disables rate limiting entirely. |
 | `log_level` | string | `"info"` | `"debug"` \| `"info"` \| `"warning"` \| `"error"` \| `"critical"` | Uvicorn log verbosity. |
 | `authentication_enabled` | boolean | `true` | - | Enables stateless authentication middleware. When true, `create_api(...)` requires a `StatelessAuthProvider` or fails closed. |
 | `authorization_enabled` | boolean | `true` | - | Enables scope authorization middleware. Requires authentication to be enabled too. |
@@ -569,14 +568,14 @@ Boolean env vars accept `true/false`, `1/0`, `yes/no`, and `on/off`.
 The following cross-field rules are enforced at load time and produce a
 `ConfigurationError` with a clear message if violated:
 
-1. **Modality names unique** — no two entries in `modalities` may share the same `name`.
-2. **Expert names unique** — no two entries in `experts` may share the same `name`.
-3. **Expert modalities declared** — every string in `experts[].modalities` must match
+1. **Modality names unique** â€” no two entries in `modalities` may share the same `name`.
+2. **Expert names unique** â€” no two entries in `experts` may share the same `name`.
+3. **Expert modalities declared** â€” every string in `experts[].modalities` must match
    a `name` in the `modalities` array.
-4. **Expert modalities non-empty** — `experts[].modalities` must contain at least one entry.
-5. **Port in range** — `serving.port` must be between 1 and 65535.
-6. **Workers ≥ 1** — `serving.workers` must be at least 1.
-7. **Modality name non-empty** — `modalities[].name` must not be blank after stripping whitespace.
+4. **Expert modalities non-empty** â€” `experts[].modalities` must contain at least one entry.
+5. **Port in range** â€” `serving.port` must be between 1 and 65535.
+6. **Workers â‰¥ 1** â€” `serving.workers` must be at least 1.
+7. **Modality name non-empty** â€” `modalities[].name` must not be blank after stripping whitespace.
 
 ---
 
@@ -677,3 +676,4 @@ The smallest valid config has one modality and one expert (no `serving` block ne
   }
 }
 ```
+
