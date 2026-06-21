@@ -55,10 +55,4 @@ submission-level context, then use these folders for implementation details.
 - [Developer experience guide](dev/developer-experience.md)
 - [Publishing guide](dev/publishing.md)
 
-## Reports
-
-- [Implementation and testing report](reports/implementation-testing-report.md)
-- [Final software maturity checklist](reports/final-checklist.md)
-- [Remote mode assessment](reports/remote-mode-assessment.md)
-
 
